@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 
@@ -72,3 +73,49 @@ class Event(TimestampedModel):
     @property
     def is_past(self) -> bool:
         return self.ends_at < timezone.now()
+
+
+class EventZone(TimestampedModel):
+    event = models.ForeignKey(
+        Event, on_delete=models.CASCADE, related_name="event_zones"
+    )
+    zone = models.ForeignKey(Zone, on_delete=models.PROTECT, related_name="event_zones")
+    price = models.DecimalField(max_digits=8, decimal_places=2)
+    tickets_for_sale = models.PositiveIntegerField()
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(price__gte=0),
+                name="check_event_zone_price_non_negative",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(tickets_for_sale__gt=0),
+                name="check_event_zone_tickets_positive",
+            ),
+            models.UniqueConstraint(
+                fields=["event", "zone"],
+                name="unique_zone_per_event",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.event} - {self.zone.name}"
+
+    def clean(self) -> None:
+        # Rules that compare against other tables can't be CHECK constraints.
+        # getattr: an unset FK raises RelatedObjectDoesNotExist (an AttributeError);
+        # the missing field itself is already reported by clean_fields().
+        zone = getattr(self, "zone", None)
+        event = getattr(self, "event", None)
+        if zone is None or event is None:
+            return
+        errors = {}
+        if zone.venue_id != event.venue_id:
+            errors["zone"] = "The zone must belong to the event's venue."
+        if self.tickets_for_sale is not None and self.tickets_for_sale > zone.capacity:
+            errors["tickets_for_sale"] = (
+                f"Cannot exceed the zone capacity ({zone.capacity})."
+            )
+        if errors:
+            raise ValidationError(errors)
