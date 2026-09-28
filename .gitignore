@@ -1,2 +1,25 @@
 # Ignore the proposal file
 PROPOSAL.md
+
+# Ignore virtual environment directories
+venv/
+.venv/
+
+# Ignore Python cache and compiled files
+__pycache__/
+*.pyc 
+
+# Ignore environment variable files
+.env
+
+# Ignore test and coverage reports
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Ignore coverage reports
+.coverage
+.htmlcov/ 
+
+# Ignore SQLite database files
+db.sqlite3 

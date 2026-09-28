@@ -1,0 +1,12 @@
+[tool.uv.workspace]
+members = ["services/catalog"]
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest",
+    "pytest-django",
+    "factory-boy",
+    "pre-commit",
+]
