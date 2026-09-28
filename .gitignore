@@ -19,7 +19,7 @@ __pycache__/
 
 # Ignore coverage reports
 .coverage
-.htmlcov/ 
+htmlcov/ 
 
 # Ignore SQLite database files
 db.sqlite3 
