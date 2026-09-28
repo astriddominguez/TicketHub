@@ -1,4 +1,6 @@
+from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 
 class TimestampedModel(models.Model):
@@ -17,6 +19,7 @@ class Venue(TimestampedModel):
     def __str__(self) -> str:
         return self.name
 
+
 class Zone(TimestampedModel):
     name = models.CharField(max_length=255)
     venue = models.ForeignKey(Venue, on_delete=models.CASCADE, related_name="zones")
@@ -34,6 +37,38 @@ class Zone(TimestampedModel):
             ),
         ]
 
-
     def __str__(self) -> str:
         return f"{self.name} - {self.venue.name}"
+
+
+class Event(TimestampedModel):
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        PUBLISHED = "published", "Published"
+        POSTPONED = "postponed", "Postponed"
+        CANCELLED = "cancelled", "Cancelled"
+
+    organizer = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="events"
+    )
+    venue = models.ForeignKey(Venue, on_delete=models.PROTECT, related_name="events")
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    starts_at = models.DateTimeField(db_index=True)
+    ends_at = models.DateTimeField()
+    status = models.CharField(max_length=20, choices=Status, default=Status.DRAFT)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(ends_at__gt=models.F("starts_at")),
+                name="check_event_ends_after_starts",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return self.title
+
+    @property
+    def is_past(self) -> bool:
+        return self.ends_at < timezone.now()
