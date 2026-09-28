@@ -31,6 +31,7 @@ class Zone(TimestampedModel):
             models.CheckConstraint(
                 condition=models.Q(capacity__gt=0),
                 name="check_zone_capacity_positive",
+                violation_error_message="Capacity must be greater than 0.",
             ),
             models.UniqueConstraint(
                 fields=["venue", "name"],
@@ -64,6 +65,7 @@ class Event(TimestampedModel):
             models.CheckConstraint(
                 condition=models.Q(ends_at__gt=models.F("starts_at")),
                 name="check_event_ends_after_starts",
+                violation_error_message="The event must end after it starts.",
             ),
         ]
 
@@ -88,10 +90,12 @@ class EventZone(TimestampedModel):
             models.CheckConstraint(
                 condition=models.Q(price__gte=0),
                 name="check_event_zone_price_non_negative",
+                violation_error_message="Price cannot be negative.",
             ),
             models.CheckConstraint(
                 condition=models.Q(tickets_for_sale__gt=0),
                 name="check_event_zone_tickets_positive",
+                violation_error_message="Tickets for sale must be greater than 0.",
             ),
             models.UniqueConstraint(
                 fields=["event", "zone"],
