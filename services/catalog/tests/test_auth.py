@@ -1,5 +1,8 @@
 import pytest
+from redis.exceptions import ConnectionError as RedisConnectionError
 from rest_framework_simplejwt.tokens import AccessToken
+
+from accounts.throttles import FailOpenScopedRateThrottle
 
 from .factories import PASSWORD, OrganizerFactory, UserFactory
 
@@ -78,3 +81,31 @@ class TestMe:
         token = str(AccessToken.for_user(buyer))
         api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {token[:-4]}AAAA")
         assert api_client.get("/api/auth/me/").status_code == 401
+
+
+class TestThrottling:
+    def test_login_is_throttled_after_five_attempts(self, api_client):
+        user = UserFactory()
+        for _ in range(5):
+            response = api_client.post(
+                "/api/auth/token/", {"username": user.username, "password": "wrong"}
+            )
+            assert response.status_code == 401
+        # Even the right password is refused now: that's what stops brute force.
+        response = api_client.post(
+            "/api/auth/token/", {"username": user.username, "password": PASSWORD}
+        )
+        assert response.status_code == 429
+        assert "Retry-After" in response.headers
+
+    def test_redis_down_does_not_block_login(self, api_client, monkeypatch):
+        class BrokenCache:
+            def get(self, *args, **kwargs):
+                raise RedisConnectionError("Redis is down")
+
+        monkeypatch.setattr(FailOpenScopedRateThrottle, "cache", BrokenCache())
+        user = UserFactory()
+        response = api_client.post(
+            "/api/auth/token/", {"username": user.username, "password": PASSWORD}
+        )
+        assert response.status_code == 200

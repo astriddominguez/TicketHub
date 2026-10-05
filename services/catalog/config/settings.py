@@ -151,6 +151,19 @@ REST_FRAMEWORK = {
         "rest_framework.filters.OrderingFilter",
     ],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    # Used by views that set `throttle_scope` (see accounts/views.py).
+    "DEFAULT_THROTTLE_RATES": {
+        "login": "5/min",  # brute-force protection, per client IP
+        "register": "10/hour",
+    },
+}
+
+# Shared by every copy of the service, so throttling counters are global.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": os.environ["CATALOG_REDIS_URL"],
+    }
 }
 
 SIMPLE_JWT = {

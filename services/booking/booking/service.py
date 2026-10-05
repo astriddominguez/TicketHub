@@ -141,6 +141,14 @@ async def get_for_user(
     return reservation
 
 
+async def event_id_for_inventory(
+    session: AsyncSession, inventory_id: int
+) -> int | None:
+    return await session.scalar(
+        select(Inventory.event_id).where(Inventory.id == inventory_id)
+    )
+
+
 async def _release_tickets(session: AsyncSession, quantities: dict[int, int]) -> None:
     # Sorted ids: concurrent jobs lock rows in the same order, avoiding deadlocks.
     for inventory_id in sorted(quantities):

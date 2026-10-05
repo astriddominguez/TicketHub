@@ -23,6 +23,13 @@ class Settings(BaseSettings):
 
     reservation_ttl_minutes: int = 10
 
+    redis_url: str = Field(alias="BOOKING_REDIS_URL")
+    # Per buyer: enough for a real person, too few for a bot hoarding tickets.
+    reservation_rate_limit: int = 10
+    reservation_rate_window_seconds: int = 60
+    # Short on purpose: a few seconds of staleness only affects what we *show*.
+    availability_cache_seconds: int = 5
+
     @property
     def database_url(self) -> str:
         password = self.db_password.get_secret_value()

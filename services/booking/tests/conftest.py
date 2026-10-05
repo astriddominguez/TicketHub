@@ -2,6 +2,10 @@ import os
 
 # Point the app at a separate test database BEFORE any booking module reads settings.
 os.environ["BOOKING_DB_NAME"] = os.environ.get("BOOKING_TEST_DB_NAME", "booking_test")
+# ...and at Redis logical database 15, which is flushed after every test.
+os.environ["BOOKING_REDIS_URL"] = os.environ.get(
+    "BOOKING_TEST_REDIS_URL", "redis://localhost:6379/15"
+)
 
 import asyncio
 import uuid
@@ -17,6 +21,7 @@ from alembic.config import Config
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
+from booking.cache import redis_client
 from booking.config import get_settings
 from booking.db import SessionFactory, engine
 from booking.main import app
@@ -49,6 +54,7 @@ async def database() -> AsyncIterator[None]:
     await asyncio.to_thread(command.upgrade, config, "head")
     yield
     await engine.dispose()
+    await redis_client.aclose()
 
 
 @pytest.fixture(autouse=True)
@@ -60,6 +66,7 @@ async def clean_tables() -> AsyncIterator[None]:
         await conn.execute(
             text("TRUNCATE reservation, inventory RESTART IDENTITY CASCADE")
         )
+    await redis_client.flushdb()  # rate-limit counters and cached availability
 
 
 @pytest.fixture

@@ -28,7 +28,10 @@ class ReservationOut(BaseModel):
 
 
 class AvailabilityOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    # Built from an Inventory row ("id") or from the cached JSON ("inventory_id").
+    model_config = ConfigDict(
+        from_attributes=True, validate_by_name=True, validate_by_alias=True
+    )
 
     inventory_id: int = Field(validation_alias="id")
     event_zone_id: int
