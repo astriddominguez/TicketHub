@@ -1,5 +1,5 @@
 [tool.uv.workspace]
-members = ["services/catalog"]
+members = ["services/catalog", "services/booking"]
 
 [dependency-groups]
 dev = [
@@ -35,14 +35,14 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["config", "accounts", "events"]
+known-first-party = ["config", "accounts", "events", "booking"]
 
 [tool.mypy]
 python_version = "3.12"
-mypy_path = "services/catalog"
+mypy_path = "services/catalog:services/booking"
 explicit_package_bases = true
 exclude = ["/migrations/"]
-plugins = ["mypy_django_plugin.main", "mypy_drf_plugin.main"]
+plugins = ["mypy_django_plugin.main", "mypy_drf_plugin.main", "pydantic.mypy"]
 # Gradual typing: check the body of every function, typed or not...
 check_untyped_defs = true
 warn_unused_ignores = true
@@ -50,6 +50,13 @@ warn_redundant_casts = true
 warn_return_any = true
 strict_equality = true
 # ...but don't force annotations everywhere yet (tighten later with disallow_untyped_defs).
+
+[[tool.mypy.overrides]]
+# New code, so it starts strict: every function must be fully annotated.
+module = ["booking.*"]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_any_generics = true
 
 [[tool.mypy.overrides]]
 module = ["django_filters.*"]
