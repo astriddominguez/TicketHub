@@ -1,6 +1,6 @@
 CATALOG := uv run --env-file .env python services/catalog/manage.py
 
-.PHONY: help up down ps manage makemigrations migrate run shell run-booking booking-migrate booking-migration test test-cov lint typecheck format
+.PHONY: help up down ps manage makemigrations migrate run shell run-booking booking-migrate booking-migration test test-catalog test-booking test-cov lint typecheck format
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -46,11 +46,17 @@ booking-migration: ## Create a booking migration: make booking-migration MSG="ad
 
 # --- Quality ---
 
-test: ## Run the catalog tests
+test: test-catalog test-booking ## Run all tests
+
+test-catalog: ## Run the catalog tests
 	cd services/catalog && uv run --env-file ../../.env pytest
 
-test-cov: ## Run the catalog tests with a coverage report
+test-booking: ## Run the booking tests (needs booking-db running)
+	cd services/booking && uv run --env-file ../../.env pytest
+
+test-cov: ## Run all tests with coverage reports
 	cd services/catalog && uv run --env-file ../../.env pytest --cov --cov-report=term
+	cd services/booking && uv run --env-file ../../.env pytest --cov --cov-report=term
 
 lint: ## Check code style, common mistakes and types
 	uv run ruff check .
@@ -58,7 +64,8 @@ lint: ## Check code style, common mistakes and types
 	$(MAKE) typecheck
 
 typecheck: ## Check type annotations with mypy
-	uv run --env-file .env mypy services/catalog services/booking
+	uv run --env-file .env mypy services/catalog
+	uv run --env-file .env mypy services/booking
 
 format: ## Auto-fix lint issues and format the code
 	uv run ruff check --fix .

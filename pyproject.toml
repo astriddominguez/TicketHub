@@ -12,6 +12,8 @@ dev = [
     "pytest-cov>=7.1.0",
     "django-stubs>=6.1.2",
     "djangorestframework-stubs>=3.18.1",
+    "pytest-asyncio>=1.4.0",
+    "httpx>=0.28.1",
 ]
 
 [tool.ruff]
@@ -59,8 +61,8 @@ disallow_incomplete_defs = true
 disallow_any_generics = true
 
 [[tool.mypy.overrides]]
-module = ["django_filters.*"]
-ignore_missing_imports = true  # this package ships no type information
+module = ["django_filters.*", "asyncpg.*"]
+ignore_missing_imports = true  # these packages ship no type information
 
 [[tool.mypy.overrides]]
 # factory-boy doesn't type `EventFactory()` as returning an Event, so mypy sees a
