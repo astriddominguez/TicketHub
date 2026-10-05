@@ -1,11 +1,26 @@
 from django.db.models import Min, Prefetch
 from django.utils import timezone
-from rest_framework import viewsets
-from rest_framework.permissions import AllowAny
+from rest_framework import status, viewsets
+from rest_framework.exceptions import APIException
+from rest_framework.permissions import AllowAny, IsAuthenticated
+
+from accounts.permissions import IsOrganizer
 
 from .filters import EventFilter
 from .models import Event, EventZone, Venue
-from .serializers import EventDetailSerializer, EventListSerializer, VenueSerializer
+from .serializers import (
+    EventDetailSerializer,
+    EventListSerializer,
+    OrganizerEventSerializer,
+    OrganizerPriceSerializer,
+    VenueSerializer,
+)
+
+
+class Conflict(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "The request conflicts with the current state of the resource."
+    default_code = "conflict"
 
 
 class EventViewSet(viewsets.ReadOnlyModelViewSet):
@@ -46,3 +61,49 @@ class VenueViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = VenueSerializer
     search_fields = ["name", "city"]
     filterset_fields = ["city"]
+
+
+class OrganizerEventViewSet(viewsets.ModelViewSet):
+    """An organizer's own events, drafts included. Other organizers' events -> 404."""
+
+    permission_classes = [IsAuthenticated, IsOrganizer]
+    serializer_class = OrganizerEventSerializer
+    filterset_fields = ["status", "venue"]
+    search_fields = ["title"]
+    ordering_fields = ["starts_at", "created_at"]
+    ordering = ["starts_at"]
+
+    def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):  # OpenAPI schema generation
+            return Event.objects.none()
+        return (
+            Event.objects.filter(organizer=self.request.user)
+            .select_related("venue")
+            .prefetch_related(
+                Prefetch(
+                    "event_zones", queryset=EventZone.objects.select_related("zone")
+                )
+            )
+        )
+
+    def perform_destroy(self, instance):
+        # Same rule as the admin: published events may have sold tickets.
+        if instance.status != Event.Status.DRAFT:
+            raise Conflict("Only draft events can be deleted. Cancel it instead.")
+        instance.delete()
+
+
+class OrganizerPriceViewSet(viewsets.ModelViewSet):
+    """Prices (event + zone) of the organizer's own events."""
+
+    permission_classes = [IsAuthenticated, IsOrganizer]
+    serializer_class = OrganizerPriceSerializer
+    filterset_fields = ["event"]
+    ordering = ["id"]
+
+    def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return EventZone.objects.none()
+        return EventZone.objects.filter(
+            event__organizer=self.request.user
+        ).select_related("event", "zone")

@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 import os
+from datetime import timedelta
 from pathlib import Path
 
 
@@ -42,6 +43,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "django_filters",
     "drf_spectacular",
+    "accounts",
     "events",
 ]
 
@@ -134,6 +136,12 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # Django REST Framework
 
 REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        # API clients send "Authorization: Bearer <token>".
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        # Lets the browsable API work when you're logged in to the admin.
+        "rest_framework.authentication.SessionAuthentication",
+    ],
     # Secure by default: every endpoint requires login unless the view opts out.
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
@@ -144,6 +152,16 @@ REST_FRAMEWORK = {
         "rest_framework.filters.OrderingFilter",
     ],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+}
+
+SIMPLE_JWT = {
+    # Own key, not SECRET_KEY: it will be shared with the booking service.
+    "SIGNING_KEY": os.environ["JWT_SIGNING_KEY"],
+    "ALGORITHM": "HS256",
+    # Short-lived access token; the refresh token gets a new one without re-login.
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
+    "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
 SPECTACULAR_SETTINGS = {
