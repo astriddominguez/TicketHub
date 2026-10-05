@@ -1,5 +1,9 @@
+from contextlib import contextmanager
+
 import pytest
 from django.core.cache import cache
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import AccessToken
 
@@ -45,3 +49,26 @@ def buyer_client(buyer) -> APIClient:
 @pytest.fixture
 def organizer_client(organizer) -> APIClient:
     return _client_for(organizer)
+
+
+@pytest.fixture
+def assert_data_queries():
+    """Like django_assert_num_queries, but ignores SAVEPOINT bookkeeping.
+
+    With ATOMIC_REQUESTS each request runs in a transaction; inside a test (which
+    is itself a transaction) that becomes SAVEPOINT + RELEASE. Those aren't data
+    queries, and N+1 is about data queries.
+    """
+
+    @contextmanager
+    def _assert(expected: int):
+        with CaptureQueriesContext(connection) as context:
+            yield
+        data_queries = [
+            query["sql"]
+            for query in context.captured_queries
+            if "SAVEPOINT" not in query["sql"]
+        ]
+        assert len(data_queries) == expected, "\n\n".join(data_queries)
+
+    return _assert

@@ -1,13 +1,13 @@
 CATALOG := uv run --env-file .env python services/catalog/manage.py
 
-.PHONY: help up down ps manage makemigrations migrate run shell run-booking booking-migrate booking-migration test test-catalog test-booking test-cov lint typecheck format
+.PHONY: help up down ps manage makemigrations migrate run shell relay run-booking booking-migrate booking-migration test test-catalog test-booking test-cov lint typecheck format
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
 
 # --- Infrastructure ---
 
-up: ## Start infrastructure containers (Postgres x2)
+up: ## Start infrastructure (Postgres x2, Redis, RabbitMQ)
 	docker compose up -d
 
 down: ## Stop infrastructure containers (data is kept)
@@ -32,6 +32,9 @@ run: ## Start the catalog dev server on http://localhost:8000
 
 shell: ## Open a Django shell for the catalog
 	$(CATALOG) shell
+
+relay: ## Publish catalog outbox messages to RabbitMQ (runs until Ctrl+C)
+	$(CATALOG) relay_outbox
 
 # --- Booking (FastAPI) ---
 

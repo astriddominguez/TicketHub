@@ -100,21 +100,21 @@ class TestFiltersSearchOrdering:
 class TestQueryCount:
     """Guards against N+1: the number of queries must not grow with the data."""
 
-    def test_list_uses_constant_queries(self, api_client, django_assert_num_queries):
+    def test_list_uses_constant_queries(self, api_client, assert_data_queries):
         for _ in range(10):
             EventZoneFactory()
-        with django_assert_num_queries(2):  # COUNT for pagination + page
+        with assert_data_queries(2):  # COUNT for pagination + page
             api_client.get(EVENTS_URL)
 
-    def test_detail_uses_constant_queries(self, api_client, django_assert_num_queries):
+    def test_detail_uses_constant_queries(self, api_client, assert_data_queries):
         event = EventFactory()
         for _ in range(5):
             EventZoneFactory(event=event)
-        with django_assert_num_queries(2):  # event + venue, then its prices + zones
+        with assert_data_queries(2):  # event + venue, then its prices + zones
             api_client.get(f"{EVENTS_URL}{event.pk}/")
 
-    def test_venues_use_constant_queries(self, api_client, django_assert_num_queries):
+    def test_venues_use_constant_queries(self, api_client, assert_data_queries):
         for _ in range(5):
             ZoneFactory()
-        with django_assert_num_queries(3):  # COUNT + venues + their zones
+        with assert_data_queries(3):  # COUNT + venues + their zones
             api_client.get("/api/venues/")

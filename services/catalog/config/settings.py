@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     "drf_spectacular",
     "accounts",
     "events",
+    "messaging",
 ]
 
 MIDDLEWARE = [
@@ -87,6 +88,9 @@ DATABASES = {
         "PASSWORD": os.environ["CATALOG_DB_PASSWORD"],
         "HOST": os.environ.get("CATALOG_DB_HOST", "localhost"),
         "PORT": os.environ.get("CATALOG_DB_PORT", "5432"),
+        # Each request is one transaction: a change and its outbox message are
+        # saved together or not at all (see messaging/).
+        "ATOMIC_REQUESTS": True,
     }
 }
 
@@ -157,6 +161,10 @@ REST_FRAMEWORK = {
         "register": "10/hour",
     },
 }
+
+# RabbitMQ: domain events for other services (published by `manage.py relay_outbox`).
+RABBITMQ_URL = os.environ["RABBITMQ_URL"]
+CATALOG_EVENTS_EXCHANGE = "catalog.events"
 
 # Shared by every copy of the service, so throttling counters are global.
 CACHES = {

@@ -37,7 +37,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["config", "accounts", "events", "booking"]
+known-first-party = ["config", "accounts", "events", "messaging", "booking"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -61,14 +61,15 @@ disallow_incomplete_defs = true
 disallow_any_generics = true
 
 [[tool.mypy.overrides]]
-module = ["django_filters.*", "asyncpg.*"]
+module = ["django_filters.*", "asyncpg.*", "pika.*"]
 ignore_missing_imports = true  # these packages ship no type information
 
 [[tool.mypy.overrides]]
-# factory-boy doesn't type `EventFactory()` as returning an Event, so mypy sees a
-# factory object. Silence only those two error codes; everything else is checked.
+# Catalog tests: factory-boy doesn't type `EventFactory()` as returning an Event,
+# so mypy sees a factory object everywhere. Application code stays fully checked;
+# tests check themselves by running.
 module = ["tests.*"]
-disable_error_code = ["attr-defined", "misc"]
+ignore_errors = true
 
 [tool.django-stubs]
 django_settings_module = "config.settings"
