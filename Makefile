@@ -1,6 +1,6 @@
 CATALOG := uv run --env-file .env python services/catalog/manage.py
 
-.PHONY: help up down ps manage makemigrations migrate run shell run-booking test test-cov lint typecheck format
+.PHONY: help up down ps manage makemigrations migrate run shell run-booking booking-migrate booking-migration test test-cov lint typecheck format
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -37,6 +37,12 @@ shell: ## Open a Django shell for the catalog
 
 run-booking: ## Start the booking dev server on http://localhost:8001
 	uv run --env-file .env uvicorn booking.main:app --app-dir services/booking --reload --port 8001
+
+booking-migrate: ## Apply booking migrations (Alembic)
+	cd services/booking && uv run --env-file ../../.env alembic upgrade head
+
+booking-migration: ## Create a booking migration: make booking-migration MSG="add x"
+	cd services/booking && uv run --env-file ../../.env alembic revision --autogenerate -m "$(MSG)"
 
 # --- Quality ---
 
