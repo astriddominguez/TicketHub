@@ -7,7 +7,7 @@ venv/
 
 # Ignore Python cache and compiled files
 __pycache__/
-*.pyc 
+*.pyc
 
 # Ignore environment variable files
 .env
@@ -19,7 +19,7 @@ __pycache__/
 
 # Ignore coverage reports
 .coverage
-htmlcov/ 
+htmlcov/
 
 # Ignore SQLite database files
-db.sqlite3 
+db.sqlite3

@@ -16,3 +16,16 @@ dependencies = [
     "psycopg[binary]>=3.3.6",
 ]
 
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "--strict-markers --reuse-db"
+
+[tool.coverage.run]
+source = ["."]
+omit = ["*/migrations/*", "tests/*", "manage.py", "config/asgi.py", "config/wsgi.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

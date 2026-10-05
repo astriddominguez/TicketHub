@@ -1,6 +1,6 @@
 CATALOG := uv run --env-file .env python services/catalog/manage.py
 
-.PHONY: help up down ps manage makemigrations migrate run shell
+.PHONY: help up down ps manage makemigrations migrate run shell test test-cov lint format
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -32,3 +32,19 @@ run: ## Start the catalog dev server on http://localhost:8000
 
 shell: ## Open a Django shell for the catalog
 	$(CATALOG) shell
+
+# --- Quality ---
+
+test: ## Run the catalog tests
+	cd services/catalog && uv run --env-file ../../.env pytest
+
+test-cov: ## Run the catalog tests with a coverage report
+	cd services/catalog && uv run --env-file ../../.env pytest --cov --cov-report=term
+
+lint: ## Check code style and common mistakes
+	uv run ruff check .
+	uv run ruff format --check .
+
+format: ## Auto-fix lint issues and format the code
+	uv run ruff check --fix .
+	uv run ruff format .
