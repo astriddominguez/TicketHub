@@ -76,8 +76,10 @@ class OrganizerEventViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):  # OpenAPI schema generation
             return Event.objects.none()
+        user = self.request.user
+        assert user.is_authenticated  # guaranteed by IsAuthenticated; narrows the type
         return (
-            Event.objects.filter(organizer=self.request.user)
+            Event.objects.filter(organizer=user)
             .select_related("venue")
             .prefetch_related(
                 Prefetch(
@@ -104,6 +106,8 @@ class OrganizerPriceViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return EventZone.objects.none()
-        return EventZone.objects.filter(
-            event__organizer=self.request.user
-        ).select_related("event", "zone")
+        user = self.request.user
+        assert user.is_authenticated  # guaranteed by IsAuthenticated; narrows the type
+        return EventZone.objects.filter(event__organizer=user).select_related(
+            "event", "zone"
+        )

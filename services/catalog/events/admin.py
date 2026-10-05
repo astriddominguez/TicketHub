@@ -42,8 +42,8 @@ class EventAdmin(admin.ModelAdmin):
             return False
         return super().has_delete_permission(request, obj)
 
-    def get_actions(self, request):
+    def get_actions(self, request, action_location=admin.ActionLocation.CHANGE_LIST):
         # The bulk "delete selected" action skips the per-object check above.
-        actions = super().get_actions(request)
+        actions = super().get_actions(request, action_location=action_location)
         actions.pop("delete_selected", None)
         return actions

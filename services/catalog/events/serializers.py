@@ -2,14 +2,15 @@ import copy
 
 from django.core.exceptions import NON_FIELD_ERRORS
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db.models import Model
 from rest_framework import serializers
 from rest_framework.settings import api_settings
 
 from .models import Event, EventZone, Venue, Zone
 
 
-class ModelValidationMixin:
-    """Run the model's full_clean() so DRF enforces the same rules as the admin.
+class FullCleanModelSerializer(serializers.ModelSerializer):
+    """Runs the model's full_clean() so DRF enforces the same rules as the admin.
 
     DRF doesn't call Model.clean() or check CheckConstraints by itself: without this,
     a negative price would reach Postgres and come back as a 500 instead of a 400.
@@ -18,7 +19,8 @@ class ModelValidationMixin:
     def validate(self, attrs):
         attrs = super().validate(attrs)
         # Work on a copy so a failed validation doesn't leave the instance modified.
-        instance = copy.copy(self.instance) if self.instance else self.Meta.model()
+        model: type[Model] = self.Meta.model
+        instance = copy.copy(self.instance) if self.instance else model()
         for field, value in attrs.items():
             setattr(instance, field, value)
         try:
@@ -83,7 +85,7 @@ class EventDetailSerializer(EventListSerializer):
 # --- Organizer (write) serializers ---
 
 
-class OrganizerEventSerializer(ModelValidationMixin, serializers.ModelSerializer):
+class OrganizerEventSerializer(FullCleanModelSerializer):
     # Not sent by the client: always the logged-in user, so nobody can create
     # events on behalf of another organizer.
     organizer = serializers.HiddenField(default=serializers.CurrentUserDefault())
@@ -117,7 +119,7 @@ class OwnEventField(serializers.PrimaryKeyRelatedField):
         return Event.objects.filter(organizer=request.user)
 
 
-class OrganizerPriceSerializer(ModelValidationMixin, serializers.ModelSerializer):
+class OrganizerPriceSerializer(FullCleanModelSerializer):
     event = OwnEventField()
 
     class Meta:

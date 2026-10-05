@@ -10,6 +10,8 @@ dev = [
     "factory-boy",
     "pre-commit",
     "pytest-cov>=7.1.0",
+    "django-stubs>=6.1.2",
+    "djangorestframework-stubs>=3.18.1",
 ]
 
 [tool.ruff]
@@ -34,3 +36,30 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["config", "accounts", "events"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "services/catalog"
+explicit_package_bases = true
+exclude = ["/migrations/"]
+plugins = ["mypy_django_plugin.main", "mypy_drf_plugin.main"]
+# Gradual typing: check the body of every function, typed or not...
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_return_any = true
+strict_equality = true
+# ...but don't force annotations everywhere yet (tighten later with disallow_untyped_defs).
+
+[[tool.mypy.overrides]]
+module = ["django_filters.*"]
+ignore_missing_imports = true  # this package ships no type information
+
+[[tool.mypy.overrides]]
+# factory-boy doesn't type `EventFactory()` as returning an Event, so mypy sees a
+# factory object. Silence only those two error codes; everything else is checked.
+module = ["tests.*"]
+disable_error_code = ["attr-defined", "misc"]
+
+[tool.django-stubs]
+django_settings_module = "config.settings"
