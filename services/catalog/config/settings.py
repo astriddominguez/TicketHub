@@ -53,6 +53,8 @@ MIDDLEWARE = [
     # First: the request id must exist before anything else logs.
     "config.middleware.RequestContextMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    # Serves the admin's static files in containers (no separate web server).
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -133,6 +135,18 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"  # filled by `collectstatic` (Dockerfile)
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedStaticFilesStorage"},
+}
+
+# Behind the gateway, the admin form posts from http://localhost:8080.
+CSRF_TRUSTED_ORIGINS = [
+    origin
+    for origin in os.environ.get("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",")
+    if origin
+]
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -159,6 +173,12 @@ REST_FRAMEWORK = {
         "rest_framework.filters.OrderingFilter",
     ],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    # How many proxies sit in front of us. Throttling keys on the client IP; by
+    # default DRF trusts the X-Forwarded-For header *the client sends*, so an
+    # attacker could invent a new IP per login attempt and dodge the limit.
+    # 0 = use the TCP peer address (local dev); 1 = behind our gateway, which
+    # overwrites X-Forwarded-For with the real client IP.
+    "NUM_PROXIES": int(os.environ.get("NUM_PROXIES", "0")),
     # Used by views that set `throttle_scope` (see accounts/views.py).
     "DEFAULT_THROTTLE_RATES": {
         "login": "5/min",  # brute-force protection, per client IP

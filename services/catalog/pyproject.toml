@@ -13,6 +13,7 @@ dependencies = [
     "djangorestframework>=3.18.1",
     "djangorestframework-simplejwt>=5.5.1",
     "drf-spectacular>=0.30.0",
+    "gunicorn>=26.2.0",
     "opentelemetry-exporter-otlp-proto-http>=1.45.0",
     "opentelemetry-instrumentation-django>=0.66b0",
     "opentelemetry-instrumentation-psycopg>=0.66b0",
@@ -23,6 +24,7 @@ dependencies = [
     "psycopg[binary]>=3.3.6",
     "redis>=8.1.0",
     "structlog>=26.1.0",
+    "whitenoise>=6.12.0",
 ]
 
 [tool.pytest.ini_options]
@@ -30,6 +32,10 @@ DJANGO_SETTINGS_MODULE = "config.settings"
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "--strict-markers --reuse-db"
+filterwarnings = [
+    # whitenoise: staticfiles/ only exists inside the image (collectstatic).
+    "ignore:No directory at:UserWarning",
+]
 
 [tool.coverage.run]
 source = ["."]

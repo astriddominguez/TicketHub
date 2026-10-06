@@ -96,3 +96,26 @@ jobs:
 
       - name: Tests with coverage (fails under 80%)
         run: make test-cov
+
+  images:
+    name: Build Docker images
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [lint, test]  # only build what passed every check
+    strategy:
+      matrix:
+        service: [catalog, booking]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build ${{ matrix.service }} image
+        run: docker build -f services/${{ matrix.service }}/Dockerfile -t tickethub-${{ matrix.service }}:ci .
+
+      - name: Smoke test - runs as a non-root user, no secrets inside
+        run: |
+          docker run --rm --entrypoint sh tickethub-${{ matrix.service }}:ci -c '
+            test "$(id -u)" != "0" || { echo "image runs as root"; exit 1; }
+            if find / -name ".env" -not -path "/proc/*" 2>/dev/null | grep -q .; then
+              echo ".env found inside the image"; exit 1
+            fi
+            echo "ok: user $(id -un), no .env"'

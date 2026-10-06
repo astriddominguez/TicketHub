@@ -1,3 +1,52 @@
+# `docker compose up` starts the WHOLE system: infrastructure, both services and
+# their background processes, behind the gateway at http://localhost:8080.
+# `make up` starts only the infrastructure, to run the services on your machine.
+
+# Settings shared by every application container. Inside the compose network
+# each service is reached by its name, on its own internal port.
+x-app-environment: &app-environment
+  CATALOG_DB_HOST: catalog-db
+  CATALOG_DB_PORT: "5432"
+  BOOKING_DB_HOST: booking-db
+  BOOKING_DB_PORT: "5432"
+  CATALOG_REDIS_URL: redis://redis:6379/1
+  BOOKING_REDIS_URL: redis://redis:6379/0
+  RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+  SMTP_HOST: mailpit
+  SMTP_PORT: "1025"
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+  LOG_FORMAT: json
+  DJANGO_DEBUG: "false"
+  DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
+  DJANGO_CSRF_TRUSTED_ORIGINS: http://localhost:8080
+  NUM_PROXIES: "1"  # the gateway: trust exactly one X-Forwarded-For hop
+  BOOKING_PUBLIC_URL: http://localhost:8080/booking
+  CONSUMER_METRICS_ADDR: 0.0.0.0
+
+x-catalog: &catalog
+  build:
+    context: .
+    dockerfile: services/catalog/Dockerfile
+  image: tickethub-catalog:local
+  env_file: .env
+  environment: *app-environment
+  restart: unless-stopped
+
+x-booking: &booking
+  build:
+    context: .
+    dockerfile: services/booking/Dockerfile
+  image: tickethub-booking:local
+  env_file: .env
+  environment: *app-environment
+  restart: unless-stopped
+
+x-healthcheck: &http-healthcheck
+  interval: 10s
+  timeout: 5s
+  retries: 5
+  start_period: 10s
+
 services:
   catalog-db:
     image: postgres:18
@@ -96,6 +145,88 @@ services:
     volumes:
       - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+
+  # ---------------------------------------------------------------- catalog
+  catalog-migrate:  # runs once, then exits; the others wait for it
+    <<: *catalog
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    restart: "no"
+    depends_on:
+      catalog-db: {condition: service_healthy}
+
+  catalog:
+    <<: *catalog
+    ports:
+      - "127.0.0.1:8000:8000"  # only for Prometheus (host network); users go through the gateway
+    healthcheck:
+      <<: *http-healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+    depends_on:
+      catalog-migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+
+  catalog-relay:
+    <<: *catalog
+    command: ["python", "manage.py", "relay_outbox"]
+    depends_on:
+      catalog-migrate: {condition: service_completed_successfully}
+      rabbitmq: {condition: service_healthy}
+
+  # ---------------------------------------------------------------- booking
+  booking-migrate:
+    <<: *booking
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      booking-db: {condition: service_healthy}
+
+  booking:
+    <<: *booking
+    ports:
+      - "127.0.0.1:8001:8001"  # only for Prometheus; users go through the gateway
+    healthcheck:
+      <<: *http-healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
+    depends_on:
+      booking-migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+
+  booking-consumer:
+    <<: *booking
+    command: ["python", "-m", "booking.consumer"]
+    ports:
+      - "127.0.0.1:9101:9101"  # its Prometheus metrics
+    depends_on:
+      booking-migrate: {condition: service_completed_successfully}
+      rabbitmq: {condition: service_healthy}
+
+  booking-worker:
+    <<: *booking
+    command: ["celery", "-A", "booking.celery_app", "worker", "--loglevel=info",
+              "--without-mingle", "--without-gossip"]
+    depends_on:
+      booking-migrate: {condition: service_completed_successfully}
+      rabbitmq: {condition: service_healthy}
+
+  booking-beat:  # the scheduler: exactly one
+    <<: *booking
+    command: ["celery", "-A", "booking.celery_app", "beat", "--loglevel=info",
+              "--schedule", "/tmp/celerybeat-schedule"]
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+
+  # ---------------------------------------------------------------- gateway
+  gateway:
+    image: nginx:1.29-alpine
+    ports:
+      - "127.0.0.1:8080:80"  # THE entry point: http://localhost:8080
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped
+    depends_on:
+      catalog: {condition: service_healthy}
+      booking: {condition: service_healthy}
 
 volumes:
   prometheus-data:

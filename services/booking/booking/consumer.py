@@ -153,7 +153,9 @@ async def main() -> None:
     configure_logging(level=settings.log_level, fmt=settings.log_format)
     configure_telemetry("booking-consumer")
     # No web server here: a small HTTP server just for Prometheus to scrape.
-    start_http_server(settings.consumer_metrics_port, addr="127.0.0.1")
+    start_http_server(
+        settings.consumer_metrics_port, addr=settings.consumer_metrics_addr
+    )
     connection = await connect(settings)
     async with connection:
         channel = await connection.channel()

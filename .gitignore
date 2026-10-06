@@ -29,3 +29,6 @@ db.sqlite3
 
 # Load test raw output (a summary is kept in loadtests/RESULTS.md)
 loadtests/results/
+
+# Django collectstatic output
+staticfiles/

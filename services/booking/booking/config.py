@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     )
 
     consumer_metrics_port: int = Field(default=9101, alias="CONSUMER_METRICS_PORT")
+    # 127.0.0.1 on a laptop; 0.0.0.0 inside a container so Prometheus can reach it.
+    consumer_metrics_addr: str = Field(
+        default="127.0.0.1", alias="CONSUMER_METRICS_ADDR"
+    )
 
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     log_format: Literal["console", "json"] = Field(

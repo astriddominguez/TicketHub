@@ -1,0 +1,19 @@
+# Never send these into an image build.
+.env
+.env.*
+!.env.example
+.git
+.github
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.coverage
+**/htmlcov
+**/staticfiles
+loadtests
+infra
+.celerybeat-schedule*
+PROPOSAL.md

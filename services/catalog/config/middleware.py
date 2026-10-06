@@ -33,7 +33,7 @@ class RequestContextMiddleware:
 
         response[REQUEST_ID_HEADER] = request_id
         elapsed = time.perf_counter() - started
-        if request.path != "/metrics":  # Prometheus scraping itself isn't traffic
+        if request.path not in {"/metrics", "/health"}:  # scrapes and probes
             route = route_template(request)
             HTTP_REQUESTS.labels(request.method, route, str(response.status_code)).inc()
             HTTP_LATENCY.labels(request.method, route).observe(elapsed)

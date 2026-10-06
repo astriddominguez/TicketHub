@@ -1,6 +1,6 @@
 CATALOG := uv run --env-file .env python services/catalog/manage.py
 
-.PHONY: help install up down ps manage makemigrations migrate run shell relay run-booking consumer worker beat stripe-listen booking-migrate booking-migration loadtest-seed loadtest loadtest-ui loadtest-check loadtest-clean test test-catalog test-booking test-cov lint typecheck format
+.PHONY: help install up stack stack-logs down ps manage makemigrations migrate run shell relay run-booking consumer worker beat stripe-listen booking-migrate booking-migration loadtest-seed loadtest loadtest-ui loadtest-check loadtest-clean test test-catalog test-booking test-cov lint typecheck format
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -10,10 +10,18 @@ install: ## Install every dependency of the whole workspace (run after uv add/re
 
 # --- Infrastructure ---
 
-up: ## Start infrastructure (Postgres x2, Redis, RabbitMQ, Mailpit, Jaeger, Prometheus, Grafana)
-	docker compose up -d
+INFRA := catalog-db booking-db redis rabbitmq mailpit jaeger prometheus grafana
 
-down: ## Stop infrastructure containers (data is kept)
+up: ## Start ONLY the infrastructure (run the services yourself: make run...)
+	docker compose up -d $(INFRA)
+
+stack: ## Start the WHOLE system in containers, behind http://localhost:8080
+	docker compose up -d --build
+
+stack-logs: ## Follow the logs of the application containers
+	docker compose logs -f catalog catalog-relay booking booking-consumer booking-worker booking-beat gateway
+
+down: ## Stop all containers (data is kept)
 	docker compose down
 
 ps: ## Show container status
