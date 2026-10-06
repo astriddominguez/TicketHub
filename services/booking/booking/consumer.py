@@ -22,6 +22,9 @@ from aio_pika.abc import (
     AbstractQueue,
     AbstractRobustConnection,
 )
+from opentelemetry import trace
+from opentelemetry.propagate import extract
+from opentelemetry.trace import SpanKind
 from pydantic import ValidationError
 
 from booking import cache, tasks
@@ -29,8 +32,10 @@ from booking.catalog_sync import EventSnapshot, apply_event_snapshot
 from booking.config import Settings, get_settings
 from booking.db import SessionFactory
 from booking.logging_config import configure_logging
+from booking.telemetry import configure_telemetry
 
 log = structlog.get_logger("booking.consumer")
+tracer = trace.get_tracer(__name__)
 
 ROUTING_KEY = "event.snapshot"
 
@@ -62,7 +67,29 @@ async def declare_topology(
     return queue
 
 
+def _trace_carrier(message: AbstractIncomingMessage) -> dict[str, str]:
+    # AMQP header values may arrive as bytes: the propagator wants strings.
+    return {
+        key: value.decode() if isinstance(value, bytes) else str(value)
+        for key, value in (message.headers or {}).items()
+    }
+
+
 async def handle_message(message: AbstractIncomingMessage) -> None:
+    # Continue the trace started by the catalog request (via outbox and relay).
+    with tracer.start_as_current_span(
+        f"{message.routing_key} process",
+        context=extract(_trace_carrier(message)),
+        kind=SpanKind.CONSUMER,
+        attributes={
+            "messaging.system": "rabbitmq",
+            "messaging.message.id": message.message_id or "",
+        },
+    ):
+        await _handle_message(message)
+
+
+async def _handle_message(message: AbstractIncomingMessage) -> None:
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(message_id=message.message_id)
     try:
@@ -118,6 +145,7 @@ async def connect(settings: Settings) -> AbstractRobustConnection:
 async def main() -> None:
     settings = get_settings()
     configure_logging(level=settings.log_level, fmt=settings.log_format)
+    configure_telemetry("booking-consumer")
     connection = await connect(settings)
     async with connection:
         channel = await connection.channel()

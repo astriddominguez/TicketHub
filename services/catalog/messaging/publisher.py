@@ -8,7 +8,11 @@ from pika.exchange_type import ExchangeType
 
 class Publisher(Protocol):
     def publish(
-        self, routing_key: str, body: dict[str, Any], message_id: str
+        self,
+        routing_key: str,
+        body: dict[str, Any],
+        message_id: str,
+        headers: dict[str, str] | None = None,
     ) -> None: ...
 
 
@@ -28,7 +32,13 @@ class RabbitPublisher:
         )
         self.channel.confirm_delivery()
 
-    def publish(self, routing_key: str, body: dict[str, Any], message_id: str) -> None:
+    def publish(
+        self,
+        routing_key: str,
+        body: dict[str, Any],
+        message_id: str,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self.channel.basic_publish(
             exchange=self.exchange,
             routing_key=routing_key,
@@ -37,6 +47,7 @@ class RabbitPublisher:
                 content_type="application/json",
                 delivery_mode=pika.DeliveryMode.Persistent,  # survives a broker restart
                 message_id=message_id,
+                headers=headers or {},  # carries "traceparent" to the consumer
             ),
             mandatory=True,  # error if no queue is bound to receive it
         )

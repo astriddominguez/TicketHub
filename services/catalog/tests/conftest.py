@@ -1,9 +1,22 @@
+import os
+
+# Tracing: nothing is ever exported from tests, but the SDK must work for the
+# tests that inspect spans in memory (the SDK itself obeys OTEL_SDK_DISABLED).
+os.environ.pop("OTEL_EXPORTER_OTLP_ENDPOINT", None)
+os.environ["OTEL_SDK_DISABLED"] = "false"
+
 from contextlib import contextmanager
 
 import pytest
 from django.core.cache import cache
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+    InMemorySpanExporter,
+)
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import AccessToken
 
@@ -72,3 +85,20 @@ def assert_data_queries():
         assert len(data_queries) == expected, "\n\n".join(data_queries)
 
     return _assert
+
+
+_SPAN_EXPORTER = InMemorySpanExporter()
+
+
+@pytest.fixture(scope="session")
+def _tracer_provider() -> None:
+    # Spans are kept in memory: tests can inspect them, nothing is sent anywhere.
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(_SPAN_EXPORTER))
+    trace.set_tracer_provider(provider)
+
+
+@pytest.fixture
+def spans(_tracer_provider) -> InMemorySpanExporter:
+    _SPAN_EXPORTER.clear()
+    return _SPAN_EXPORTER

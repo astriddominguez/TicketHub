@@ -9,6 +9,9 @@ os.environ["BOOKING_REDIS_URL"] = os.environ.get(
 # ...and at test-only RabbitMQ exchange/queues, so dev messages are never touched.
 os.environ["CATALOG_EVENTS_EXCHANGE"] = "catalog.events.test"
 os.environ["BOOKING_CATALOG_EVENTS_QUEUE"] = "booking.catalog-events.test"
+# Tracing: never export from tests (tests that check spans use an in-memory one).
+os.environ.pop("OTEL_EXPORTER_OTLP_ENDPOINT", None)
+os.environ["OTEL_SDK_DISABLED"] = "false"  # the SDK obeys it: keep the SDK working
 # Stripe is faked in tests; only the webhook secret is needed, to sign payloads.
 os.environ["STRIPE_SECRET_KEY"] = ""
 os.environ["STRIPE_WEBHOOK_SECRET"] = "whsec_test_secret"
@@ -26,6 +29,12 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from httpx import ASGITransport, AsyncClient
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+    InMemorySpanExporter,
+)
 from sqlalchemy import text
 
 from booking import emails, tasks
@@ -189,3 +198,20 @@ async def available(inventory_id: int) -> int:
         inventory = await session.get(Inventory, inventory_id)
         assert inventory is not None
         return inventory.available
+
+
+_SPAN_EXPORTER = InMemorySpanExporter()
+
+
+@pytest.fixture(scope="session")
+def _tracer_provider() -> None:
+    # Spans are kept in memory: tests can inspect them, nothing is sent anywhere.
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(_SPAN_EXPORTER))
+    trace.set_tracer_provider(provider)
+
+
+@pytest.fixture
+def spans(_tracer_provider: None) -> InMemorySpanExporter:
+    _SPAN_EXPORTER.clear()
+    return _SPAN_EXPORTER

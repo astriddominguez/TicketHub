@@ -63,6 +63,12 @@ services:
       - "127.0.0.1:${SMTP_PORT}:1025"  # SMTP: the services send email here
       - "127.0.0.1:8025:8025"  # web UI: read the captured emails
 
+  jaeger:
+    image: jaegertracing/jaeger:2.21.0
+    ports:
+      - "127.0.0.1:4318:4318"  # OTLP over HTTP: the services send traces here
+      - "127.0.0.1:16686:16686"  # web UI: explore the traces
+
 volumes:
   catalog-db-data:
   booking-db-data:

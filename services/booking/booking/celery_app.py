@@ -11,10 +11,16 @@ from typing import Any
 
 import structlog
 from celery import Celery
-from celery.signals import setup_logging, task_postrun, task_prerun
+from celery.signals import (
+    setup_logging,
+    task_postrun,
+    task_prerun,
+    worker_process_init,
+)
 
 from booking.config import get_settings
 from booking.logging_config import configure_logging
+from booking.telemetry import configure_telemetry
 
 settings = get_settings()
 
@@ -55,6 +61,13 @@ celery_app.conf.update(
 def _configure_logging(**kwargs: Any) -> None:
     # Connecting this signal stops Celery from installing its own log format.
     configure_logging(level=settings.log_level, fmt=settings.log_format)
+
+
+@worker_process_init.connect
+def _configure_telemetry(**kwargs: Any) -> None:
+    # Per worker process: tracing's background exporter thread doesn't survive
+    # the fork that creates each worker process.
+    configure_telemetry("booking-worker")
 
 
 @task_prerun.connect

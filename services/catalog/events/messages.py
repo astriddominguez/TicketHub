@@ -1,6 +1,7 @@
 """Messages the catalog sends to other services about events."""
 
 from django.db import transaction
+from opentelemetry.propagate import inject
 
 from messaging.models import OutboxMessage
 
@@ -43,6 +44,10 @@ def enqueue_event_snapshot(event_id: int) -> None:
         event = Event.objects.select_for_update().filter(pk=event_id).first()
         if event is None or event.status == Event.Status.DRAFT:
             return
+        trace_context: dict[str, str] = {}
+        inject(trace_context)  # empty when tracing is off
         OutboxMessage.objects.create(
-            routing_key=EVENT_SNAPSHOT, payload=build_event_snapshot(event)
+            routing_key=EVENT_SNAPSHOT,
+            payload=build_event_snapshot(event),
+            trace_context=trace_context,
         )

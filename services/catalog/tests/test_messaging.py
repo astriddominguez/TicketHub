@@ -4,6 +4,8 @@ from typing import Any
 
 import pytest
 from django.utils import timezone
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind
 
 from events.messages import EVENT_SNAPSHOT
 from events.models import Event
@@ -102,12 +104,20 @@ class TestOutboxWrites:
 class FakePublisher:
     def __init__(self, fail: bool = False) -> None:
         self.sent: list[tuple[str, dict[str, Any], str]] = []
+        self.headers: list[dict[str, str]] = []
         self.fail = fail
 
-    def publish(self, routing_key: str, body: dict[str, Any], message_id: str) -> None:
+    def publish(
+        self,
+        routing_key: str,
+        body: dict[str, Any],
+        message_id: str,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         if self.fail:
             raise ConnectionError("RabbitMQ is down")
         self.sent.append((routing_key, body, message_id))
+        self.headers.append(headers or {})
 
 
 class TestRelay:
@@ -135,3 +145,34 @@ class TestRelay:
         with pytest.raises(ConnectionError):
             relay_batch(FakePublisher(fail=True))
         assert OutboxMessage.objects.filter(published_at__isnull=True).count() == 1
+
+
+class TestTracing:
+    """The trace of the request that changed the event survives the outbox."""
+
+    def test_outbox_keeps_the_trace_and_the_relay_continues_it(self, spans):
+        tracer = trace.get_tracer("test")
+        with tracer.start_as_current_span("PATCH /api/organizer/events/") as request:
+            event = EventFactory()  # its snapshot is written to the outbox
+        trace_id = format(request.get_span_context().trace_id, "032x")
+
+        message = OutboxMessage.objects.filter(payload__event_id=event.pk).last()
+        assert trace_id in message.trace_context["traceparent"]
+
+        publisher = FakePublisher()
+        relay_batch(publisher)  # later, in another process, outside any request
+
+        # The message leaves with the same trace in its headers...
+        assert trace_id in publisher.headers[-1]["traceparent"]
+        # ...and the relay's span is a child of the original request's span.
+        [publish] = [
+            s for s in spans.get_finished_spans() if s.name.endswith("publish")
+        ]
+        assert publish.parent.span_id == request.get_span_context().span_id
+        assert publish.kind == SpanKind.PRODUCER
+
+    def test_without_tracing_nothing_breaks(self):
+        # No active span: the outbox simply has no trace context.
+        event = EventFactory()
+        message = OutboxMessage.objects.filter(payload__event_id=event.pk).last()
+        assert message.trace_context == {}

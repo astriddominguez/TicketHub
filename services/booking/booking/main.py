@@ -25,6 +25,7 @@ from booking.schemas import (
     ReservationCreate,
     ReservationOut,
 )
+from booking.telemetry import configure_telemetry
 
 settings = get_settings()
 configure_logging(level=settings.log_level, fmt=settings.log_format)
@@ -35,6 +36,7 @@ app = FastAPI(
     version="0.1.0",
 )
 app.middleware("http")(request_context_middleware)
+configure_telemetry("booking-api", app=app)
 
 log = structlog.get_logger(__name__)
 

@@ -11,6 +11,10 @@ import aio_pika
 import pytest
 from aio_pika.abc import AbstractChannel, AbstractExchange
 from httpx import AsyncClient
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+    InMemorySpanExporter,
+)
+from opentelemetry.trace import SpanKind
 from sqlalchemy import select, update
 
 from booking.config import get_settings
@@ -23,7 +27,7 @@ from .conftest import auth
 settings = get_settings()
 DEAD_LETTER_QUEUE = f"{settings.catalog_events_queue}.dead"
 
-Publish = Callable[[bytes], Awaitable[None]]
+Publish = Callable[..., Awaitable[None]]
 
 
 @pytest.fixture
@@ -46,8 +50,10 @@ async def publish(channel: AbstractChannel) -> AsyncIterator[Publish]:
         settings.catalog_events_exchange
     )
 
-    async def _publish(body: bytes) -> None:
-        await exchange.publish(aio_pika.Message(body=body), routing_key=ROUTING_KEY)
+    async def _publish(body: bytes, headers: dict[str, str] | None = None) -> None:
+        await exchange.publish(
+            aio_pika.Message(body=body, headers=headers or {}), routing_key=ROUTING_KEY
+        )
 
     yield _publish
     await queue.cancel(consumer_tag)
@@ -168,3 +174,26 @@ async def test_cancelled_event_queues_refunds_for_paid_reservations(
     while expected not in enqueued_tasks:
         assert asyncio.get_running_loop().time() < deadline, enqueued_tasks
         await asyncio.sleep(0.05)
+
+
+async def test_consumer_continues_the_catalog_trace(
+    publish: Publish, spans: InMemorySpanExporter
+) -> None:
+    # What the catalog's relay puts in the message headers (W3C trace context).
+    trace_id, parent_span_id = "4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7"
+    await publish(
+        snapshot_body(version=1, tickets=100),
+        headers={"traceparent": f"00-{trace_id}-{parent_span_id}-01"},
+    )
+    await wait_for_total(100)
+
+    deadline = asyncio.get_running_loop().time() + 5
+    while not [s for s in spans.get_finished_spans() if s.name.endswith("process")]:
+        assert asyncio.get_running_loop().time() < deadline
+        await asyncio.sleep(0.05)
+    [process] = [s for s in spans.get_finished_spans() if s.name.endswith("process")]
+
+    assert process.context is not None and process.parent is not None
+    assert format(process.context.trace_id, "032x") == trace_id  # same trace
+    assert format(process.parent.span_id, "016x") == parent_span_id  # child of relay
+    assert process.kind == SpanKind.CONSUMER

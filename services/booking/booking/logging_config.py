@@ -13,14 +13,25 @@ import sys
 from typing import Literal
 
 import structlog
-from structlog.types import Processor
+from opentelemetry import trace
+from structlog.types import EventDict, Processor, WrappedLogger
 
 LogFormat = Literal["console", "json"]
+
+
+def add_trace_ids(_: WrappedLogger, __: str, event_dict: EventDict) -> EventDict:
+    """Put the current trace id on the log line: jump from a log to its trace."""
+    context = trace.get_current_span().get_span_context()
+    if context.is_valid:
+        event_dict["trace_id"] = format(context.trace_id, "032x")
+        event_dict["span_id"] = format(context.span_id, "016x")
+    return event_dict
 
 
 def configure_logging(*, level: str = "INFO", fmt: LogFormat = "console") -> None:
     shared: list[Processor] = [
         structlog.contextvars.merge_contextvars,  # request_id, task_id...
+        add_trace_ids,
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso", utc=True),

@@ -11,6 +11,9 @@ class OutboxMessage(models.Model):
 
     routing_key = models.CharField(max_length=100)
     payload = models.JSONField()
+    # W3C trace context ({"traceparent": ...}) of the change that wrote the
+    # message, so the relay and the consumer continue that same trace later.
+    trace_context = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     published_at = models.DateTimeField(null=True, blank=True)
 

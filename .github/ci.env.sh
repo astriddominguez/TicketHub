@@ -42,5 +42,8 @@ TICKET_SIGNING_KEY=ci-only-ticket-signing-key-0123456789abcdef
 
 LOG_FORMAT=json
 LOG_LEVEL=INFO
+
+# No OTEL_EXPORTER_OTLP_ENDPOINT in CI: no collector, so tracing isn't set up
+# (tests that check spans use their own in-memory tracer).
 EOF
 echo "CI .env written"

@@ -1,13 +1,16 @@
 CATALOG := uv run --env-file .env python services/catalog/manage.py
 
-.PHONY: help up down ps manage makemigrations migrate run shell relay run-booking consumer worker beat stripe-listen booking-migrate booking-migration test test-catalog test-booking test-cov lint typecheck format
+.PHONY: help install up down ps manage makemigrations migrate run shell relay run-booking consumer worker beat stripe-listen booking-migrate booking-migration test test-catalog test-booking test-cov lint typecheck format
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
 
+install: ## Install every dependency of the whole workspace (run after uv add/remove)
+	uv sync --all-packages
+
 # --- Infrastructure ---
 
-up: ## Start infrastructure (Postgres x2, Redis, RabbitMQ, Mailpit)
+up: ## Start infrastructure (Postgres x2, Redis, RabbitMQ, Mailpit, Jaeger)
 	docker compose up -d
 
 down: ## Stop infrastructure containers (data is kept)
