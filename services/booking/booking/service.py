@@ -23,6 +23,10 @@ class NotEnoughTicketsError(Exception):
     pass
 
 
+class NotOnSaleError(Exception):
+    pass
+
+
 class ReservationNotFoundError(Exception):
     pass
 
@@ -43,19 +47,25 @@ async def reserve(
     # Check, subtract and read the price in ONE statement.
     taken = await session.execute(
         update(Inventory)
-        .where(Inventory.id == inventory_id, Inventory.available >= quantity)
+        .where(
+            Inventory.id == inventory_id,
+            Inventory.on_sale.is_(True),
+            Inventory.available >= quantity,
+        )
         .values(available=Inventory.available - quantity)
         .returning(Inventory.price)
     )
     price = taken.scalar_one_or_none()
     if price is None:
-        # Nothing was updated: either it doesn't exist or there aren't enough left.
-        exists = await session.scalar(
-            select(Inventory.id).where(Inventory.id == inventory_id)
+        # Nothing was updated: find out which condition failed, for a clear error.
+        on_sale = await session.scalar(
+            select(Inventory.on_sale).where(Inventory.id == inventory_id)
         )
         await session.rollback()
-        if exists is None:
+        if on_sale is None:
             raise InventoryNotFoundError
+        if not on_sale:
+            raise NotOnSaleError
         raise NotEnoughTicketsError
 
     reservation = Reservation(

@@ -1,6 +1,6 @@
 CATALOG := uv run --env-file .env python services/catalog/manage.py
 
-.PHONY: help up down ps manage makemigrations migrate run shell relay run-booking booking-migrate booking-migration test test-catalog test-booking test-cov lint typecheck format
+.PHONY: help up down ps manage makemigrations migrate run shell relay run-booking consumer booking-migrate booking-migration test test-catalog test-booking test-cov lint typecheck format
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -40,6 +40,9 @@ relay: ## Publish catalog outbox messages to RabbitMQ (runs until Ctrl+C)
 
 run-booking: ## Start the booking dev server on http://localhost:8001
 	uv run --env-file .env uvicorn booking.main:app --app-dir services/booking --reload --port 8001
+
+consumer: ## Consume catalog events from RabbitMQ into booking (Ctrl+C to stop)
+	cd services/booking && uv run --env-file ../../.env python -m booking.consumer
 
 booking-migrate: ## Apply booking migrations (Alembic)
 	cd services/booking && uv run --env-file ../../.env alembic upgrade head

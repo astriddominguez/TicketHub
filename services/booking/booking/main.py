@@ -81,7 +81,7 @@ async def event_availability(
     dependencies=[Depends(reserve_rate_limit)],
     responses={
         404: {"description": "Unknown inventory"},
-        409: {"description": "Not enough tickets left"},
+        409: {"description": "Not enough tickets left, or not on sale"},
         429: {"description": "Too many reservation attempts"},
     },
 )
@@ -103,6 +103,10 @@ async def create_reservation(
     except service.NotEnoughTicketsError:
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Not enough tickets left."
+        ) from None
+    except service.NotOnSaleError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "These tickets are not on sale."
         ) from None
     await _invalidate_availability(session, reservation.inventory_id)
     return reservation

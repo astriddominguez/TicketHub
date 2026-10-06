@@ -6,6 +6,9 @@ os.environ["BOOKING_DB_NAME"] = os.environ.get("BOOKING_TEST_DB_NAME", "booking_
 os.environ["BOOKING_REDIS_URL"] = os.environ.get(
     "BOOKING_TEST_REDIS_URL", "redis://localhost:6379/15"
 )
+# ...and at test-only RabbitMQ exchange/queues, so dev messages are never touched.
+os.environ["CATALOG_EVENTS_EXCHANGE"] = "catalog.events.test"
+os.environ["BOOKING_CATALOG_EVENTS_QUEUE"] = "booking.catalog-events.test"
 
 import asyncio
 import uuid
@@ -64,7 +67,9 @@ async def clean_tables() -> AsyncIterator[None]:
     yield
     async with engine.begin() as conn:
         await conn.execute(
-            text("TRUNCATE reservation, inventory RESTART IDENTITY CASCADE")
+            text(
+                "TRUNCATE reservation, inventory, catalog_event RESTART IDENTITY CASCADE"
+            )
         )
     await redis_client.flushdb()  # rate-limit counters and cached availability
 

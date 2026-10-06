@@ -4,14 +4,17 @@ from decimal import Decimal
 from enum import StrEnum
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
     Index,
     Numeric,
+    String,
     func,
     text,
+    true,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -39,6 +42,26 @@ class Inventory(Base):
     price: Mapped[Decimal] = mapped_column(Numeric(8, 2))
     total: Mapped[int]
     available: Mapped[int]
+    # False when the zone was removed from the event, or the event was cancelled
+    # or postponed. Rows are never deleted: reservations still point to them.
+    on_sale: Mapped[bool] = mapped_column(server_default=true())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class CatalogEvent(Base):
+    """The last catalog snapshot applied for each event.
+
+    `version` makes the consumer idempotent and order-proof: a snapshot whose
+    version isn't newer than this one is a duplicate or arrived late, and is ignored.
+    """
+
+    __tablename__ = "catalog_event"
+
+    event_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+    status: Mapped[str] = mapped_column(String(20))
+    version: Mapped[int] = mapped_column(BigInteger)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

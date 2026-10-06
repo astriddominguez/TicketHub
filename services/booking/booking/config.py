@@ -23,6 +23,15 @@ class Settings(BaseSettings):
 
     reservation_ttl_minutes: int = 10
 
+    # RabbitMQ: snapshots of the catalog's events arrive here (see consumer.py).
+    rabbitmq_url: SecretStr = Field(alias="RABBITMQ_URL")
+    catalog_events_exchange: str = Field(
+        default="catalog.events", alias="CATALOG_EVENTS_EXCHANGE"
+    )
+    catalog_events_queue: str = Field(
+        default="booking.catalog-events", alias="BOOKING_CATALOG_EVENTS_QUEUE"
+    )
+
     redis_url: str = Field(alias="BOOKING_REDIS_URL")
     # Per buyer: enough for a real person, too few for a bot hoarding tickets.
     reservation_rate_limit: int = 10

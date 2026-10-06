@@ -5,6 +5,7 @@ description = "TicketHub booking service: temporary reservations without double 
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "aio-pika>=10.1.0",
     "alembic>=1.20.0",
     "asyncpg>=0.31.0",
     "fastapi>=0.142.2",

@@ -38,3 +38,4 @@ class AvailabilityOut(BaseModel):
     price: Decimal
     total: int
     available: int
+    on_sale: bool
