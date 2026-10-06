@@ -26,3 +26,6 @@ db.sqlite3
 
 # Celery Beat local state
 .celerybeat-schedule*
+
+# Load test raw output (a summary is kept in loadtests/RESULTS.md)
+loadtests/results/

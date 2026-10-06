@@ -1,6 +1,6 @@
 CATALOG := uv run --env-file .env python services/catalog/manage.py
 
-.PHONY: help install up down ps manage makemigrations migrate run shell relay run-booking consumer worker beat stripe-listen booking-migrate booking-migration test test-catalog test-booking test-cov lint typecheck format
+.PHONY: help install up down ps manage makemigrations migrate run shell relay run-booking consumer worker beat stripe-listen booking-migrate booking-migration loadtest-seed loadtest loadtest-ui loadtest-check loadtest-clean test test-catalog test-booking test-cov lint typecheck format
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -61,6 +61,31 @@ booking-migrate: ## Apply booking migrations (Alembic)
 
 booking-migration: ## Create a booking migration: make booking-migration MSG="add x"
 	cd services/booking && uv run --env-file ../../.env alembic revision --autogenerate -m "$(MSG)"
+
+# --- Load testing (needs `make run` and `make run-booking` running) ---
+
+LOADTEST := PYTHONPATH=services/booking uv run --env-file .env
+
+loadtest-seed: ## Create the load-test event (id 900001) in the booking database
+	$(LOADTEST) python loadtests/seed.py
+
+loadtest: loadtest-seed ## Ticket rush: 300 users for 60 s, then check nothing was oversold
+	mkdir -p loadtests/results
+	@# The oversell check runs even if Locust saw failures; the run still
+	@# fails if either of them did.
+	uv run --env-file .env locust -f loadtests/locustfile.py --headless \
+		--users 300 --spawn-rate 30 --run-time 60s \
+		--csv loadtests/results/run --html loadtests/results/report.html; \
+	status=$$?; $(MAKE) --no-print-directory loadtest-check && exit $$status
+
+loadtest-ui: loadtest-seed ## Interactive load test at http://localhost:8089
+	uv run --env-file .env locust -f loadtests/locustfile.py
+
+loadtest-check: ## Verify held + available == total for every load-test zone
+	$(LOADTEST) python loadtests/seed.py --check
+
+loadtest-clean: ## Delete the load-test event and its reservations
+	$(LOADTEST) python loadtests/seed.py --clean
 
 # --- Quality ---
 

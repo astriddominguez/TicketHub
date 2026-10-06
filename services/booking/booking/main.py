@@ -36,6 +36,11 @@ app = FastAPI(
     title="TicketHub Booking API",
     description="Temporary reservations that never sell the same ticket twice.",
     version="0.1.0",
+    # FastAPI >= 0.142 adds its own OTLP exporters when OTEL_EXPORTER_OTLP_ENDPOINT
+    # is set (traces, metrics AND logs), on top of ours: every span would be sent
+    # twice, and metrics would go to Jaeger, which rejects them (404). Found during
+    # the load test. booking.telemetry is the one place that sets up exporting.
+    telemetry={"auto_configure": False},
 )
 app.middleware("http")(request_context_middleware)
 configure_telemetry("booking-api", app=app)

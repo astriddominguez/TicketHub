@@ -15,6 +15,7 @@ dev = [
     "pytest-asyncio>=1.4.0",
     "httpx>=0.28.1",
     "celery-types>=0.26.0",
+    "locust>=2.46.7",
 ]
 
 [tool.ruff]
