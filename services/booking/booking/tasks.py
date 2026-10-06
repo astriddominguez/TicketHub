@@ -15,7 +15,7 @@ from booking import emails, payments, service, tickets
 from booking.celery_app import celery_app
 from booking.config import get_settings
 from booking.db import standalone_session
-from booking.models import Reservation, ReservationStatus
+from booking.models import CatalogEvent, Inventory, Reservation, ReservationStatus
 
 logger = logging.getLogger(__name__)
 
@@ -121,13 +121,15 @@ async def _send_tickets_email(reservation_id: uuid.UUID) -> bool:
     return True
 
 
-@celery_app.task(name="booking.refund_late_payment", max_retries=5)
-def refund_late_payment(reservation_id: str) -> bool:
-    return asyncio.run(_refund_late_payment(uuid.UUID(reservation_id)))
+@celery_app.task(name="booking.refund_payment", max_retries=5)
+def refund_payment(reservation_id: str) -> bool:
+    return asyncio.run(_refund_payment(uuid.UUID(reservation_id)))
 
 
-async def _refund_late_payment(reservation_id: uuid.UUID) -> bool:
-    """Money arrived for tickets we no longer held: give it back."""
+async def _refund_payment(reservation_id: uuid.UUID) -> bool:
+    """Give the money back for a paid reservation that didn't end up confirmed:
+    the payment arrived too late, or the event was cancelled.
+    """
     settings = get_settings()
     async with standalone_session() as session:
         reservation = await session.scalar(
@@ -153,15 +155,34 @@ async def _refund_late_payment(reservation_id: uuid.UUID) -> bool:
             reservation_id=reservation.id,
             payment_intent_id=reservation.stripe_payment_intent_id,
         )
+        if reservation.buyer_email:
+            event_status = await session.scalar(
+                select(CatalogEvent.status)
+                .join(Inventory, Inventory.event_id == CatalogEvent.event_id)
+                .where(Inventory.id == reservation.inventory_id)
+            )
+            reason = (
+                "because the event was cancelled"
+                if event_status == "cancelled"
+                else "because your reservation had expired before the payment arrived"
+            )
+            message = emails.refund_email(
+                to=reservation.buyer_email,
+                sender=settings.email_from,
+                reservation_id=str(reservation.id),
+                amount=reservation.unit_price * reservation.quantity,
+                reason=reason,
+            )
+            # If this fails, refunded_at stays empty and the sweep retries: the
+            # refund itself is idempotent, so only the email is repeated.
+            await asyncio.to_thread(emails.send, message, settings)
         await session.execute(
             update(Reservation)
             .where(Reservation.id == reservation_id)
             .values(refunded_at=datetime.now(UTC), stripe_refund_id=refund_id)
         )
         await session.commit()
-    logger.info(
-        "Refunded late payment of reservation %s (%s)", reservation_id, refund_id
-    )
+    logger.info("Refunded reservation %s (%s)", reservation_id, refund_id)
     return True
 
 
@@ -192,5 +213,5 @@ async def _sweep_payments() -> dict[str, int]:
             )
         )
     sent = sum([await _send_tickets_email(rid) for rid in to_email])
-    refunded = sum([await _refund_late_payment(rid) for rid in to_refund])
+    refunded = sum([await _refund_payment(rid) for rid in to_refund])
     return {"tickets_sent": sent, "refunded": refunded}

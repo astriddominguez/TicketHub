@@ -1,14 +1,15 @@
 """Applying catalog snapshots: idempotent, order-proof, never losing held tickets."""
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from booking.catalog_sync import EventSnapshot, apply_event_snapshot
 from booking.db import SessionFactory
-from booking.models import Inventory
+from booking.models import Inventory, Reservation, ReservationStatus
 
 from .conftest import auth
 
@@ -47,7 +48,7 @@ def zone(
 
 async def apply(snap: EventSnapshot) -> bool:
     async with SessionFactory() as session:
-        return await apply_event_snapshot(session, snap)
+        return (await apply_event_snapshot(session, snap)).applied
 
 
 async def inventory(event_zone_id: int) -> Inventory:
@@ -136,3 +137,40 @@ async def test_postponed_event_pauses_sales_until_republished(
 
     await apply(snapshot(3, status="published"))
     assert await reserve(client, 1, 1) == 201
+
+
+async def test_cancelled_event_cancels_reservations_and_lists_paid_ones(
+    client: AsyncClient,
+) -> None:
+    await apply(snapshot(1, zones=[zone(1, tickets=10)]))
+    row = await inventory(1)
+    statuses = []
+    for user_id in (1, 2):
+        response = await client.post(
+            "/reservations",
+            json={"inventory_id": row.id, "quantity": 2},
+            headers=auth(user_id),
+        )
+        statuses.append(response.json()["id"])
+    unpaid_id, paid_id = statuses
+    async with SessionFactory() as session:  # the second one was paid
+        await session.execute(
+            update(Reservation)
+            .where(Reservation.id == uuid.UUID(paid_id))
+            .values(status=ReservationStatus.CONFIRMED, paid_at=datetime.now(UTC))
+        )
+        await session.commit()
+
+    async with SessionFactory() as session:
+        result = await apply_event_snapshot(
+            session, snapshot(2, status="cancelled", zones=[zone(1, tickets=10)])
+        )
+
+    assert result.to_refund == [uuid.UUID(paid_id)]
+    async with SessionFactory() as session:
+        for reservation_id in (unpaid_id, paid_id):
+            stored = await session.get(Reservation, uuid.UUID(reservation_id))
+            assert stored is not None
+            assert stored.status == ReservationStatus.CANCELLED
+    row = await inventory(1)
+    assert (row.available, row.total, row.on_sale) == (10, 10, False)

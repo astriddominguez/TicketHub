@@ -176,11 +176,21 @@ async def record_checkout_completed(
 
 async def refund(
     client: stripe.StripeClient, *, reservation_id: uuid.UUID, payment_intent_id: str
-) -> str:
-    """Refund a payment. The idempotency key makes a repeated call a no-op at Stripe."""
-    result = await asyncio.to_thread(
-        client.v1.refunds.create,
-        {"payment_intent": payment_intent_id},
-        {"idempotency_key": f"refund-{reservation_id}"},
-    )
+) -> str | None:
+    """Refund a payment in full; returns the refund id (None if already refunded).
+
+    The idempotency key makes a repeated call a no-op at Stripe - but Stripe only
+    remembers keys for 24 hours. A retry after that gets "charge_already_refunded",
+    which means the work is done, not that it failed.
+    """
+    try:
+        result = await asyncio.to_thread(
+            client.v1.refunds.create,
+            {"payment_intent": payment_intent_id},
+            {"idempotency_key": f"refund-{reservation_id}"},
+        )
+    except stripe.InvalidRequestError as exc:
+        if exc.code == "charge_already_refunded":
+            return None
+        raise
     return result.id

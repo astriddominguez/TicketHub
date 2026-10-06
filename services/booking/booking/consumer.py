@@ -24,7 +24,7 @@ from aio_pika.abc import (
 )
 from pydantic import ValidationError
 
-from booking import cache
+from booking import cache, tasks
 from booking.catalog_sync import EventSnapshot, apply_event_snapshot
 from booking.config import Settings, get_settings
 from booking.db import SessionFactory
@@ -71,15 +71,21 @@ async def handle_message(message: AbstractIncomingMessage) -> None:
 
     try:
         async with SessionFactory() as session:
-            applied = await apply_event_snapshot(session, snapshot)
+            result = await apply_event_snapshot(session, snapshot)
     except Exception:
         logger.exception("Could not apply snapshot of event %s", snapshot.event_id)
         await asyncio.sleep(1)  # don't spin if the database is down
         await message.nack(requeue=True)
         return
 
-    if applied:
+    if result.applied:
         await cache.invalidate(cache.availability_key(snapshot.event_id))
+        for reservation_id in result.to_refund:
+            # Best effort: if this is lost, the payment sweep refunds it anyway.
+            try:
+                await asyncio.to_thread(tasks.refund_payment.delay, str(reservation_id))
+            except Exception:
+                logger.warning("Could not enqueue refund of %s", reservation_id)
         logger.info(
             "Applied event %s v%s (%s, %d zones)",
             snapshot.event_id,

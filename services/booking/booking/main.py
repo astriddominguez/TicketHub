@@ -290,7 +290,7 @@ async def stripe_webhook(
         await _enqueue(tasks.send_tickets_email.delay, reservation_id)
     elif outcome is payments.PaymentOutcome.LATE:
         logger.warning("Late payment for %s: refunding", reservation_id)
-        await _enqueue(tasks.refund_late_payment.delay, reservation_id)
+        await _enqueue(tasks.refund_payment.delay, reservation_id)
     elif outcome is payments.PaymentOutcome.UNKNOWN_RESERVATION:
         logger.error("Payment for unknown reservation %s", reservation_id)
     # Always 200 once verified: an error would make Stripe retry for days.

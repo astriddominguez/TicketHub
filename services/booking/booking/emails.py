@@ -60,3 +60,20 @@ def tickets_email(
             png, maintype="image", subtype="png", filename=f"ticket-{number}.png"
         )
     return message
+
+
+def refund_email(
+    *, to: str, sender: str, reservation_id: str, amount: Decimal, reason: str
+) -> EmailMessage:
+    message = EmailMessage()
+    message["Subject"] = "Your TicketHub payment has been refunded"
+    message["From"] = sender
+    message["To"] = to
+    message.set_content(
+        f"Hi,\n\n"
+        f"We've refunded your payment of {amount} € {reason}.\n"
+        f"It can take 5-10 days to appear on your statement.\n\n"
+        f"Reservation: {reservation_id}\n\n"
+        f"— TicketHub\n"
+    )
+    return message

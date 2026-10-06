@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -10,12 +11,14 @@ import aio_pika
 import pytest
 from aio_pika.abc import AbstractChannel, AbstractExchange
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from booking.config import get_settings
 from booking.consumer import ROUTING_KEY, connect, declare_topology, handle_message
 from booking.db import SessionFactory
-from booking.models import Inventory
+from booking.models import Inventory, Reservation, ReservationStatus
+
+from .conftest import auth
 
 settings = get_settings()
 DEAD_LETTER_QUEUE = f"{settings.catalog_events_queue}.dead"
@@ -50,11 +53,11 @@ async def publish(channel: AbstractChannel) -> AsyncIterator[Publish]:
     await queue.cancel(consumer_tag)
 
 
-def snapshot_body(version: int, tickets: int = 100) -> bytes:
+def snapshot_body(version: int, tickets: int = 100, status: str = "published") -> bytes:
     payload: dict[str, Any] = {
         "event_id": 77,
         "version": version,
-        "status": "published",
+        "status": status,
         "starts_at": (datetime.now(UTC) + timedelta(days=30)).isoformat(),
         "zones": [
             {
@@ -131,4 +134,37 @@ async def test_snapshot_invalidates_cached_availability(
     deadline = asyncio.get_running_loop().time() + 2
     while (await client.get("/events/77/availability")).json()[0]["total"] != 300:
         assert asyncio.get_running_loop().time() < deadline, "cache not invalidated"
+        await asyncio.sleep(0.05)
+
+
+async def test_cancelled_event_queues_refunds_for_paid_reservations(
+    publish: Publish, client: AsyncClient, enqueued_tasks: list[tuple[str, str]]
+) -> None:
+    await publish(snapshot_body(version=1, tickets=100))
+    await wait_for_total(100)
+    async with SessionFactory() as session:
+        inventory_id = await session.scalar(
+            select(Inventory.id).where(Inventory.event_zone_id == 700)
+        )
+    reservation = (
+        await client.post(
+            "/reservations",
+            json={"inventory_id": inventory_id, "quantity": 2},
+            headers=auth(5),
+        )
+    ).json()
+    async with SessionFactory() as session:  # it gets paid
+        await session.execute(
+            update(Reservation)
+            .where(Reservation.id == uuid.UUID(reservation["id"]))
+            .values(status=ReservationStatus.CONFIRMED, paid_at=datetime.now(UTC))
+        )
+        await session.commit()
+
+    await publish(snapshot_body(version=2, tickets=100, status="cancelled"))
+
+    expected = ("booking.refund_payment", reservation["id"])
+    deadline = asyncio.get_running_loop().time() + 5
+    while expected not in enqueued_tasks:
+        assert asyncio.get_running_loop().time() < deadline, enqueued_tasks
         await asyncio.sleep(0.05)

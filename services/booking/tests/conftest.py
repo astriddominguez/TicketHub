@@ -18,6 +18,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from email.message import EmailMessage
 
 import asyncpg
 import jwt
@@ -27,7 +28,7 @@ from alembic.config import Config
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
-from booking import tasks
+from booking import emails, tasks
 from booking.cache import redis_client
 from booking.config import get_settings
 from booking.db import SessionFactory, engine
@@ -115,6 +116,32 @@ def auth(user_id: int, email: str | None = None) -> dict[str, str]:
     return {"Authorization": f"Bearer {make_token(user_id, email=email)}"}
 
 
+class RecordingSMTP:
+    """Stands in for smtplib.SMTP: keeps the messages instead of sending them."""
+
+    sent: list[EmailMessage] = []
+
+    def __init__(self, host: str, port: int, timeout: float) -> None:
+        pass
+
+    def __enter__(self) -> "RecordingSMTP":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        pass
+
+    def send_message(self, message: EmailMessage) -> None:
+        RecordingSMTP.sent.append(message)
+
+
+@pytest.fixture(autouse=True)
+def sent_emails(monkeypatch: pytest.MonkeyPatch) -> list[EmailMessage]:
+    """No test ever talks to a real SMTP server (not even the local Mailpit)."""
+    RecordingSMTP.sent = []
+    monkeypatch.setattr(emails.smtplib, "SMTP", RecordingSMTP)
+    return RecordingSMTP.sent
+
+
 @pytest.fixture(autouse=True)
 def enqueued_tasks(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
     """Never send real Celery messages from tests: record (task, argument) instead."""
@@ -122,7 +149,7 @@ def enqueued_tasks(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
     for task in (
         tasks.send_reservation_pending_email,
         tasks.send_tickets_email,
-        tasks.refund_late_payment,
+        tasks.refund_payment,
     ):
 
         def record(reservation_id: str, name: str = task.name) -> None:

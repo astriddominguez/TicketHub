@@ -17,13 +17,15 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import stripe
 from httpx import AsyncClient
+from sqlalchemy import update
 
 from booking import emails, payments, service, tasks, tickets
 from booking.config import get_settings
 from booking.db import SessionFactory
 from booking.main import app, get_stripe_client
-from booking.models import Reservation, ReservationStatus
+from booking.models import CatalogEvent, Reservation, ReservationStatus
 
 from .conftest import CreateInventory, auth
 
@@ -35,6 +37,7 @@ class FakeStripe:
     """Just enough of stripe.StripeClient for our code, recording every call."""
 
     def __init__(self) -> None:
+        self.already_refunded = False
         self.created: list[dict[str, Any]] = []
         self.refunds: list[tuple[dict[str, Any], dict[str, Any]]] = []
         self.sessions: dict[str, SimpleNamespace] = {}
@@ -61,6 +64,12 @@ class FakeStripe:
     def _refund(
         self, params: dict[str, Any], options: dict[str, Any]
     ) -> SimpleNamespace:
+        if self.already_refunded:  # what Stripe says once the 24h key has expired
+            raise stripe.InvalidRequestError(
+                "Charge has already been refunded.",
+                param=None,
+                code="charge_already_refunded",
+            )
         self.refunds.append((params, options))
         return SimpleNamespace(id=f"re_test_{len(self.refunds)}")
 
@@ -296,7 +305,7 @@ class TestWebhook:
         stored = await load(reservation.id)
         assert stored.status == ReservationStatus.CANCELLED  # tickets stay released
         assert stored.paid_at is not None
-        assert ("booking.refund_late_payment", str(reservation.id)) in enqueued_tasks
+        assert ("booking.refund_payment", str(reservation.id)) in enqueued_tasks
 
     async def test_unpaid_and_other_events_are_ignored(
         self, client: AsyncClient, create_inventory: CreateInventory
@@ -353,10 +362,8 @@ class TestTicketsAndRefunds:
             await service.cancel(session, reservation_id=reservation.id, user_id=ANA)
         await post_webhook(client, checkout_completed(reservation.id))
 
-        assert await asyncio.to_thread(tasks.refund_late_payment, str(reservation.id))
-        assert not await asyncio.to_thread(
-            tasks.refund_late_payment, str(reservation.id)
-        )
+        assert await asyncio.to_thread(tasks.refund_payment, str(reservation.id))
+        assert not await asyncio.to_thread(tasks.refund_payment, str(reservation.id))
 
         [(params, options)] = fake_stripe.refunds
         assert params == {"payment_intent": "pi_test_1"}
@@ -383,8 +390,61 @@ class TestTicketsAndRefunds:
         result = await asyncio.to_thread(tasks.sweep_payments)
 
         assert result == {"tickets_sent": 1, "refunded": 1}
-        assert len(smtp) == 1
+        subjects = sorted(message["Subject"] for message in smtp)
+        assert subjects == [
+            "Your 2 TicketHub ticket(s)",
+            "Your TicketHub payment has been refunded",
+        ]
         assert len(fake_stripe.refunds) == 1
+
+
+class TestEventCancellationRefunds:
+    async def cancelled_paid_reservation(
+        self, client: AsyncClient, create_inventory: CreateInventory
+    ) -> Reservation:
+        """A paid reservation whose event was then cancelled by the catalog."""
+        reservation = await make_reservation(create_inventory)
+        await post_webhook(client, checkout_completed(reservation.id))
+        async with SessionFactory() as session:
+            session.add(CatalogEvent(event_id=1, status="cancelled", version=9))
+            await session.execute(
+                update(Reservation)
+                .where(Reservation.id == reservation.id)
+                .values(status=ReservationStatus.CANCELLED)
+            )
+            await session.commit()
+        return reservation
+
+    async def test_refund_email_explains_the_event_was_cancelled(
+        self,
+        client: AsyncClient,
+        create_inventory: CreateInventory,
+        fake_stripe: FakeStripe,
+        sent_emails: list[EmailMessage],
+    ) -> None:
+        reservation = await self.cancelled_paid_reservation(client, create_inventory)
+
+        assert await asyncio.to_thread(tasks.refund_payment, str(reservation.id))
+
+        assert len(fake_stripe.refunds) == 1
+        [message] = sent_emails
+        assert message["To"] == "ana@example.com"
+        assert "80.00 € because the event was cancelled" in message.get_content()
+
+    async def test_already_refunded_at_stripe_counts_as_done(
+        self,
+        client: AsyncClient,
+        create_inventory: CreateInventory,
+        fake_stripe: FakeStripe,
+    ) -> None:
+        reservation = await self.cancelled_paid_reservation(client, create_inventory)
+        fake_stripe.already_refunded = True
+
+        assert await asyncio.to_thread(tasks.refund_payment, str(reservation.id))
+
+        stored = await load(reservation.id)
+        assert stored.refunded_at is not None  # done, not failing forever
+        assert stored.stripe_refund_id is None
 
 
 class TestTicketCodes:
