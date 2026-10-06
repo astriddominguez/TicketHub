@@ -4,11 +4,11 @@ Every task is safe to run twice (acks_late means a task can be redelivered).
 """
 
 import asyncio
-import logging
 import smtplib
 import uuid
 from datetime import UTC, datetime
 
+import structlog
 from sqlalchemy import select, update
 
 from booking import emails, payments, service, tickets
@@ -17,7 +17,7 @@ from booking.config import get_settings
 from booking.db import standalone_session
 from booking.models import CatalogEvent, Inventory, Reservation, ReservationStatus
 
-logger = logging.getLogger(__name__)
+log = structlog.get_logger(__name__)
 
 
 @celery_app.task(name="booking.expire_reservations")
@@ -30,7 +30,7 @@ async def _expire_reservations() -> int:
     async with standalone_session() as session:
         count = await service.expire_due_reservations(session, now=datetime.now(UTC))
     if count:
-        logger.info("Expired %d reservation(s)", count)
+        log.info("reservations_expired", count=count)
     return count
 
 
@@ -146,8 +146,9 @@ async def _refund_payment(reservation_id: uuid.UUID) -> bool:
         try:
             client = payments.stripe_client(settings)
         except payments.PaymentsNotConfiguredError:
-            logger.warning(
-                "Stripe not configured: refund of %s postponed", reservation_id
+            log.warning(
+                "refund_postponed_stripe_not_configured",
+                reservation_id=str(reservation_id),
             )
             return False
         refund_id = await payments.refund(
@@ -182,7 +183,11 @@ async def _refund_payment(reservation_id: uuid.UUID) -> bool:
             .values(refunded_at=datetime.now(UTC), stripe_refund_id=refund_id)
         )
         await session.commit()
-    logger.info("Refunded reservation %s (%s)", reservation_id, refund_id)
+    log.info(
+        "reservation_refunded",
+        reservation_id=str(reservation_id),
+        refund_id=refund_id,
+    )
     return True
 
 

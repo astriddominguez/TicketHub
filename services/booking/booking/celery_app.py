@@ -7,9 +7,14 @@ Beat:    celery -A booking.celery_app beat     (or `make beat`) - run ONE beat o
          it's the scheduler, two of them would schedule every job twice.
 """
 
+from typing import Any
+
+import structlog
 from celery import Celery
+from celery.signals import setup_logging, task_postrun, task_prerun
 
 from booking.config import get_settings
+from booking.logging_config import configure_logging
 
 settings = get_settings()
 
@@ -44,3 +49,21 @@ celery_app.conf.update(
         },
     },
 )
+
+
+@setup_logging.connect
+def _configure_logging(**kwargs: Any) -> None:
+    # Connecting this signal stops Celery from installing its own log format.
+    configure_logging(level=settings.log_level, fmt=settings.log_format)
+
+
+@task_prerun.connect
+def _bind_task_context(task_id: str, task: Any, **kwargs: Any) -> None:
+    # Every log line inside a task says which task (and which run of it) it was.
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(task_id=task_id, task=task.name)
+
+
+@task_postrun.connect
+def _clear_task_context(**kwargs: Any) -> None:
+    structlog.contextvars.clear_contextvars()

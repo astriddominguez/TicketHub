@@ -13,9 +13,9 @@ Guarantees:
 """
 
 import asyncio
-import logging
 
 import aio_pika
+import structlog
 from aio_pika.abc import (
     AbstractChannel,
     AbstractIncomingMessage,
@@ -28,8 +28,9 @@ from booking import cache, tasks
 from booking.catalog_sync import EventSnapshot, apply_event_snapshot
 from booking.config import Settings, get_settings
 from booking.db import SessionFactory
+from booking.logging_config import configure_logging
 
-logger = logging.getLogger("booking.consumer")
+log = structlog.get_logger("booking.consumer")
 
 ROUTING_KEY = "event.snapshot"
 
@@ -62,10 +63,16 @@ async def declare_topology(
 
 
 async def handle_message(message: AbstractIncomingMessage) -> None:
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(message_id=message.message_id)
     try:
         snapshot = EventSnapshot.model_validate_json(message.body)
-    except ValidationError:
-        logger.error("Invalid event snapshot, dead-lettering it: %r", message.body)
+    except ValidationError as exc:
+        log.error(
+            "snapshot_invalid_dead_lettered",
+            body=message.body.decode(errors="replace")[:500],
+            errors=exc.errors(include_url=False),
+        )
         await message.reject(requeue=False)
         return
 
@@ -73,7 +80,7 @@ async def handle_message(message: AbstractIncomingMessage) -> None:
         async with SessionFactory() as session:
             result = await apply_event_snapshot(session, snapshot)
     except Exception:
-        logger.exception("Could not apply snapshot of event %s", snapshot.event_id)
+        log.exception("snapshot_apply_failed", event_id=snapshot.event_id)
         await asyncio.sleep(1)  # don't spin if the database is down
         await message.nack(requeue=True)
         return
@@ -85,19 +92,20 @@ async def handle_message(message: AbstractIncomingMessage) -> None:
             try:
                 await asyncio.to_thread(tasks.refund_payment.delay, str(reservation_id))
             except Exception:
-                logger.warning("Could not enqueue refund of %s", reservation_id)
-        logger.info(
-            "Applied event %s v%s (%s, %d zones)",
-            snapshot.event_id,
-            snapshot.version,
-            snapshot.status,
-            len(snapshot.zones),
+                log.warning("refund_enqueue_failed", reservation_id=str(reservation_id))
+        log.info(
+            "snapshot_applied",
+            event_id=snapshot.event_id,
+            version=snapshot.version,
+            status=snapshot.status,
+            zones=len(snapshot.zones),
+            refunds=len(result.to_refund),
         )
     else:
-        logger.info(
-            "Ignored stale snapshot of event %s v%s",
-            snapshot.event_id,
-            snapshot.version,
+        log.info(
+            "snapshot_ignored_stale",
+            event_id=snapshot.event_id,
+            version=snapshot.version,
         )
     await message.ack()  # only now: the change is safely committed
 
@@ -108,17 +116,15 @@ async def connect(settings: Settings) -> AbstractRobustConnection:
 
 
 async def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-    )
     settings = get_settings()
+    configure_logging(level=settings.log_level, fmt=settings.log_format)
     connection = await connect(settings)
     async with connection:
         channel = await connection.channel()
         await channel.set_qos(prefetch_count=10)  # at most 10 unacked at a time
         queue = await declare_topology(channel, settings)
         await queue.consume(handle_message)
-        logger.info("Waiting for catalog events on %r", settings.catalog_events_queue)
+        log.info("consumer_started", queue=settings.catalog_events_queue)
         await asyncio.Future()  # run until cancelled (Ctrl+C)
 
 
@@ -126,4 +132,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Stopped.")
+        log.info("consumer_stopped")

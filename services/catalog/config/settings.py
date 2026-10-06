@@ -14,6 +14,8 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
+from config.logging import configure_logging
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -48,6 +50,8 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # First: the request id must exist before anything else logs.
+    "config.middleware.RequestContextMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -189,3 +193,11 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "Public catalog of events, venues and prices.",
     "VERSION": "0.1.0",
 }
+
+
+# Logging: structlog for everything (see config/logging.py), not Django's default.
+LOGGING_CONFIG = None
+configure_logging(
+    level=os.environ.get("LOG_LEVEL", "INFO"),
+    fmt="json" if os.environ.get("LOG_FORMAT") == "json" else "console",
+)

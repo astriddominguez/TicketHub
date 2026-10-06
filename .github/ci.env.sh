@@ -39,5 +39,8 @@ STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
 BOOKING_PUBLIC_URL=http://localhost:8001
 TICKET_SIGNING_KEY=ci-only-ticket-signing-key-0123456789abcdef
+
+LOG_FORMAT=json
+LOG_LEVEL=INFO
 EOF
 echo "CI .env written"

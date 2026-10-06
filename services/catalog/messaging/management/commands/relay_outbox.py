@@ -1,6 +1,6 @@
-import logging
 import time
 
+import structlog
 from django.conf import settings
 from django.core.management.base import BaseCommand
 from pika.exceptions import AMQPError, UnroutableError
@@ -8,7 +8,7 @@ from pika.exceptions import AMQPError, UnroutableError
 from messaging.publisher import RabbitPublisher
 from messaging.relay import relay_batch
 
-logger = logging.getLogger(__name__)
+log = structlog.get_logger("catalog.relay")
 
 MAX_BACKOFF_SECONDS = 30.0
 
@@ -21,11 +21,11 @@ class Command(BaseCommand):
         parser.add_argument("--interval", type=float, default=1.0)
 
     def handle(self, *args, **options):
-        self.stdout.write("Relaying outbox messages to RabbitMQ (Ctrl+C to stop)...")
+        log.info("relay_started", exchange=settings.CATALOG_EVENTS_EXCHANGE)
         try:
             self._run(once=options["once"], interval=options["interval"])
         except KeyboardInterrupt:
-            self.stdout.write("\nStopped. Pending messages stay safely in the outbox.")
+            log.info("relay_stopped", note="pending messages stay in the outbox")
 
     def _run(self, *, once: bool, interval: float) -> None:
         publisher: RabbitPublisher | None = None
@@ -41,21 +41,22 @@ class Command(BaseCommand):
                         )
                     sent = relay_batch(publisher)
                     if sent:
-                        self.stdout.write(f"Published {sent} message(s)")
+                        log.info("outbox_published", count=sent)
                 except UnroutableError:
                     # RabbitMQ is fine, but no queue is bound for these messages yet.
                     failed = True
-                    self.stderr.write(
-                        "No consumer queue bound yet (is the booking consumer "
-                        f"running?). Messages kept in the outbox; retry in {backoff:.0f}s."
+                    log.warning(
+                        "outbox_unroutable",
+                        hint="is the booking consumer running?",
+                        retry_in_seconds=backoff,
                     )
                 except AMQPError as exc:
                     failed = True
-                    self.stderr.write(
-                        f"RabbitMQ unavailable ({type(exc).__name__}). "
-                        f"Messages kept in the outbox; retry in {backoff:.0f}s."
+                    log.warning(
+                        "rabbitmq_unavailable",
+                        error=type(exc).__name__,
+                        retry_in_seconds=backoff,
                     )
-                    logger.debug("RabbitMQ error", exc_info=True)
                     if publisher is not None:
                         publisher.close()
                     publisher = None
@@ -64,7 +65,7 @@ class Command(BaseCommand):
                     return
                 if failed:
                     # Exponential backoff (1, 2, 4... up to 30s): don't hammer a
-                    # broken broker, and don't flood the terminal.
+                    # broken broker, and don't flood the logs.
                     time.sleep(backoff)
                     backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
                 else:

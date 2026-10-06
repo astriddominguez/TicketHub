@@ -9,16 +9,16 @@ window plus another at the start of the next can reach 2x the limit for a moment
 A sliding window or token bucket fixes that, at the cost of more complexity.
 """
 
-import logging
 import time
 
+import structlog
 from fastapi import HTTPException, status
 from redis.exceptions import RedisError
 
 from booking.auth import CurrentUserDep
 from booking.cache import redis_client
 
-logger = logging.getLogger(__name__)
+log = structlog.get_logger(__name__)
 
 
 class RateLimit:
@@ -41,7 +41,7 @@ class RateLimit:
         except RedisError:
             # The limiter protects us; it is not what keeps tickets correct (Postgres
             # does). Blocking every sale because Redis is down would be worse.
-            logger.warning("Redis unavailable: rate limit skipped", exc_info=True)
+            log.warning("redis_unavailable", action="rate_limit_skipped", exc_info=True)
             return
 
         if count > self.limit:

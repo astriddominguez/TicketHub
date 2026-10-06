@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Annotated
 
 import jwt
+import structlog
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -51,11 +52,14 @@ def get_current_user(
     # A refresh token is also signed by the catalog, but it is not meant for API calls.
     if claims["token_type"] != "access":
         raise _unauthorized("An access token is required.")
-    return CurrentUser(
+    user = CurrentUser(
         id=int(claims["user_id"]),
         roles=tuple(claims.get("roles", ())),
         email=claims.get("email") or None,  # older tokens or users without email
     )
+    # Every log line from here on in this request says who it was for.
+    structlog.contextvars.bind_contextvars(user_id=user.id)
+    return user
 
 
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]

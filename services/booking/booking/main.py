@@ -1,11 +1,11 @@
 import asyncio
-import logging
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 import stripe
+import structlog
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select, text
@@ -15,8 +15,10 @@ from booking import cache, payments, service, tasks
 from booking.auth import CurrentUserDep
 from booking.config import get_settings
 from booking.db import get_session
+from booking.logging_config import configure_logging
 from booking.models import Inventory, Reservation
 from booking.ratelimit import RateLimit
+from booking.request_context import request_context_middleware
 from booking.schemas import (
     AvailabilityOut,
     CheckoutOut,
@@ -24,17 +26,20 @@ from booking.schemas import (
     ReservationOut,
 )
 
+settings = get_settings()
+configure_logging(level=settings.log_level, fmt=settings.log_format)
+
 app = FastAPI(
     title="TicketHub Booking API",
     description="Temporary reservations that never sell the same ticket twice.",
     version="0.1.0",
 )
+app.middleware("http")(request_context_middleware)
 
-logger = logging.getLogger(__name__)
+log = structlog.get_logger(__name__)
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
-settings = get_settings()
 reserve_rate_limit = RateLimit(
     "reserve",
     limit=settings.reservation_rate_limit,
@@ -52,7 +57,9 @@ async def _enqueue(delay: Callable[[str], Any], reservation_id: uuid.UUID) -> No
     try:
         await asyncio.to_thread(delay, str(reservation_id))
     except Exception:
-        logger.warning("Could not enqueue task for %s", reservation_id, exc_info=True)
+        log.warning(
+            "task_enqueue_failed", reservation_id=str(reservation_id), exc_info=True
+        )
 
 
 def get_stripe_client() -> stripe.StripeClient:
@@ -289,10 +296,10 @@ async def stripe_webhook(
     if outcome is payments.PaymentOutcome.CONFIRMED:
         await _enqueue(tasks.send_tickets_email.delay, reservation_id)
     elif outcome is payments.PaymentOutcome.LATE:
-        logger.warning("Late payment for %s: refunding", reservation_id)
+        log.warning("late_payment_refunding", reservation_id=str(reservation_id))
         await _enqueue(tasks.refund_payment.delay, reservation_id)
     elif outcome is payments.PaymentOutcome.UNKNOWN_RESERVATION:
-        logger.error("Payment for unknown reservation %s", reservation_id)
+        log.error("payment_for_unknown_reservation", reservation_id=str(reservation_id))
     # Always 200 once verified: an error would make Stripe retry for days.
     return {"status": outcome.value}
 

@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings
@@ -49,6 +50,11 @@ class Settings(BaseSettings):
     smtp_port: int = Field(default=1025, alias="SMTP_PORT")
     email_from: str = Field(
         default="TicketHub <tickets@tickethub.local>", alias="EMAIL_FROM"
+    )
+
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    log_format: Literal["console", "json"] = Field(
+        default="console", alias="LOG_FORMAT"
     )
 
     redis_url: str = Field(alias="BOOKING_REDIS_URL")

@@ -1,9 +1,8 @@
-import logging
-
+import structlog
 from redis.exceptions import RedisError
 from rest_framework.throttling import ScopedRateThrottle
 
-logger = logging.getLogger(__name__)
+log = structlog.get_logger(__name__)
 
 
 class FailOpenScopedRateThrottle(ScopedRateThrottle):
@@ -16,5 +15,5 @@ class FailOpenScopedRateThrottle(ScopedRateThrottle):
         try:
             return super().allow_request(request, view)
         except RedisError:
-            logger.warning("Redis unavailable: throttling skipped", exc_info=True)
+            log.warning("redis_unavailable", action="throttling_skipped", exc_info=True)
             return True

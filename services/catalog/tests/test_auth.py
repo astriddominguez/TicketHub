@@ -116,3 +116,27 @@ class TestThrottling:
             "/api/auth/token/", {"username": user.username, "password": PASSWORD}
         )
         assert response.status_code == 200
+
+
+class TestRequestLogging:
+    def test_response_carries_request_id(self, api_client):
+        response = api_client.get("/api/events/", HTTP_X_REQUEST_ID="gateway-1")
+        assert response.headers["X-Request-ID"] == "gateway-1"
+
+    def test_suspicious_request_id_is_replaced(self, api_client):
+        forged = 'x" level=error event="fake'
+        response = api_client.get("/api/events/", HTTP_X_REQUEST_ID=forged)
+        assert response.headers["X-Request-ID"] != forged
+
+    def test_request_log_line_includes_the_jwt_user(self, buyer_client, buyer, caplog):
+        caplog.set_level("INFO")
+        buyer_client.get("/api/auth/me/")
+        [line] = [
+            record.msg
+            for record in caplog.records
+            if isinstance(record.msg, dict) and record.msg.get("event") == "request"
+        ]
+        assert line["path"] == "/api/auth/me/"
+        assert line["status_code"] == 200
+        assert line["user_id"] == buyer.pk  # set by DRF's JWT auth, inside the view
+        assert "request_id" in line
