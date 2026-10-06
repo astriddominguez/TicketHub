@@ -39,3 +39,7 @@ class AvailabilityOut(BaseModel):
     total: int
     available: int
     on_sale: bool
+
+
+class CheckoutOut(BaseModel):
+    checkout_url: str

@@ -1,20 +1,28 @@
 import asyncio
 import logging
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, HTTPException, status
+import stripe
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi.responses import HTMLResponse
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from booking import cache, service, tasks
+from booking import cache, payments, service, tasks
 from booking.auth import CurrentUserDep
 from booking.config import get_settings
 from booking.db import get_session
 from booking.models import Inventory, Reservation
 from booking.ratelimit import RateLimit
-from booking.schemas import AvailabilityOut, ReservationCreate, ReservationOut
+from booking.schemas import (
+    AvailabilityOut,
+    CheckoutOut,
+    ReservationCreate,
+    ReservationOut,
+)
 
 app = FastAPI(
     title="TicketHub Booking API",
@@ -34,18 +42,29 @@ reserve_rate_limit = RateLimit(
 )
 
 
-async def _enqueue_pending_email(reservation_id: uuid.UUID) -> None:
-    """Best effort: the reservation is already saved; an email must not undo it.
+async def _enqueue(delay: Callable[[str], Any], reservation_id: uuid.UUID) -> None:
+    """Best effort: the database already has the truth; a lost task is retried by
+    the periodic sweep (payments) or is merely a missing reminder (pending email).
 
     .delay() talks to RabbitMQ with blocking I/O, so it runs in a thread instead
     of freezing the event loop (and every other request) while it waits.
     """
     try:
-        await asyncio.to_thread(
-            tasks.send_reservation_pending_email.delay, str(reservation_id)
-        )
+        await asyncio.to_thread(delay, str(reservation_id))
     except Exception:
-        logger.warning("Could not enqueue email for %s", reservation_id, exc_info=True)
+        logger.warning("Could not enqueue task for %s", reservation_id, exc_info=True)
+
+
+def get_stripe_client() -> stripe.StripeClient:
+    try:
+        return payments.stripe_client(settings)
+    except payments.PaymentsNotConfiguredError:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "Payments are not configured."
+        ) from None
+
+
+StripeDep = Annotated[stripe.StripeClient, Depends(get_stripe_client)]
 
 
 async def _invalidate_availability(session: AsyncSession, inventory_id: int) -> None:
@@ -129,7 +148,7 @@ async def create_reservation(
         ) from None
     await _invalidate_availability(session, reservation.inventory_id)
     if user.email:
-        await _enqueue_pending_email(reservation.id)
+        await _enqueue(tasks.send_reservation_pending_email.delay, reservation.id)
     return reservation
 
 
@@ -187,3 +206,107 @@ async def cancel_reservation(
         ) from None
     await _invalidate_availability(session, reservation.inventory_id)
     return reservation
+
+
+@app.post(
+    "/reservations/{reservation_id}/checkout",
+    response_model=CheckoutOut,
+    tags=["payments"],
+    responses={
+        409: {"description": "Not pending any more, or already expired"},
+        503: {"description": "Payments are not configured"},
+    },
+)
+async def create_checkout(
+    reservation_id: uuid.UUID,
+    user: CurrentUserDep,
+    session: SessionDep,
+    client: StripeDep,
+) -> CheckoutOut:
+    """A Stripe payment page for this reservation (same page if asked twice)."""
+    try:
+        url = await payments.checkout_url(
+            session,
+            client,
+            settings,
+            reservation_id=reservation_id,
+            user_id=user.id,
+            now=datetime.now(UTC),
+        )
+    except service.ReservationNotFoundError:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "Reservation not found."
+        ) from None
+    except service.ReservationNotPendingError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"Reservation is already {exc.args[0]}."
+        ) from None
+    except payments.ReservationExpiredError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Reservation has expired."
+        ) from None
+    return CheckoutOut(checkout_url=url)
+
+
+@app.post("/webhooks/stripe", include_in_schema=False)
+async def stripe_webhook(
+    request: Request,
+    session: SessionDep,
+    stripe_signature: Annotated[str | None, Header(alias="stripe-signature")] = None,
+) -> dict[str, str]:
+    """Called by Stripe, not by users: trusted only if the signature is valid."""
+    if settings.stripe_webhook_secret is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "Payments are not configured."
+        )
+    payload = await request.body()  # the raw bytes: the signature covers them
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, stripe_signature, settings.stripe_webhook_secret.get_secret_value()
+        )
+    except (ValueError, stripe.SignatureVerificationError):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Invalid payload or signature."
+        ) from None
+
+    if event.type != "checkout.session.completed":
+        return {"status": "ignored"}
+    checkout = event.data.object  # a stripe Session object (attributes, not a dict)
+    reference = getattr(checkout, "client_reference_id", None)
+    # Card payments are "paid" immediately; slower methods arrive later as
+    # "checkout.session.async_payment_succeeded" (not enabled in this project).
+    if getattr(checkout, "payment_status", None) != "paid" or not reference:
+        return {"status": "ignored"}
+
+    reservation_id = uuid.UUID(reference)
+    outcome = await payments.record_checkout_completed(
+        session,
+        event_id=event.id,
+        reservation_id=reservation_id,
+        payment_intent_id=str(checkout.payment_intent),
+        now=datetime.now(UTC),
+    )
+    if outcome is payments.PaymentOutcome.CONFIRMED:
+        await _enqueue(tasks.send_tickets_email.delay, reservation_id)
+    elif outcome is payments.PaymentOutcome.LATE:
+        logger.warning("Late payment for %s: refunding", reservation_id)
+        await _enqueue(tasks.refund_late_payment.delay, reservation_id)
+    elif outcome is payments.PaymentOutcome.UNKNOWN_RESERVATION:
+        logger.error("Payment for unknown reservation %s", reservation_id)
+    # Always 200 once verified: an error would make Stripe retry for days.
+    return {"status": outcome.value}
+
+
+@app.get("/payment/success", response_class=HTMLResponse, include_in_schema=False)
+async def payment_success() -> str:
+    return (
+        "<h1>Payment received</h1><p>Your tickets are on their way to your email.</p>"
+    )
+
+
+@app.get("/payment/cancelled", response_class=HTMLResponse, include_in_schema=False)
+async def payment_cancelled() -> str:
+    return (
+        "<h1>Payment cancelled</h1>"
+        "<p>Your tickets stay reserved until the reservation expires.</p>"
+    )

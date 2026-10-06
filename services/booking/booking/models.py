@@ -115,4 +115,29 @@ class Reservation(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
+    # --- Payment (Stripe). The database records what happened; Celery tasks act
+    # on it (send tickets, refund) and a periodic sweep retries anything missed.
+    stripe_checkout_session_id: Mapped[str | None] = mapped_column(String(255))
+    stripe_payment_intent_id: Mapped[str | None] = mapped_column(String(255))
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    tickets_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    refunded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    stripe_refund_id: Mapped[str | None] = mapped_column(String(255))
+
     inventory: Mapped[Inventory] = relationship()
+
+
+class ProcessedStripeEvent(Base):
+    """Stripe webhook events already handled (Stripe may deliver one twice).
+
+    Written in the same transaction as the event's effect: either both happen
+    or neither does, so a retried webhook is recognised and ignored.
+    """
+
+    __tablename__ = "processed_stripe_event"
+
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)  # "evt_..."
+    type: Mapped[str] = mapped_column(String(100))
+    processed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

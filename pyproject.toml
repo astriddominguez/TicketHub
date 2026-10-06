@@ -62,7 +62,7 @@ disallow_incomplete_defs = true
 disallow_any_generics = true
 
 [[tool.mypy.overrides]]
-module = ["django_filters.*", "asyncpg.*", "pika.*"]
+module = ["django_filters.*", "asyncpg.*", "pika.*", "qrcode.*"]
 ignore_missing_imports = true  # these packages ship no type information
 
 [[tool.mypy.overrides]]

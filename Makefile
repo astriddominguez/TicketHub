@@ -1,6 +1,6 @@
 CATALOG := uv run --env-file .env python services/catalog/manage.py
 
-.PHONY: help up down ps manage makemigrations migrate run shell relay run-booking consumer worker beat booking-migrate booking-migration test test-catalog test-booking test-cov lint typecheck format
+.PHONY: help up down ps manage makemigrations migrate run shell relay run-booking consumer worker beat stripe-listen booking-migrate booking-migration test test-catalog test-booking test-cov lint typecheck format
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -49,6 +49,9 @@ worker: ## Run the booking Celery worker (background tasks)
 
 beat: ## Run the booking Celery Beat scheduler (only ONE at a time)
 	cd services/booking && uv run --env-file ../../.env celery -A booking.celery_app beat --loglevel=info --schedule ../../.celerybeat-schedule
+
+stripe-listen: ## Forward Stripe test webhooks to booking (needs the Stripe CLI)
+	stripe listen --forward-to localhost:8001/webhooks/stripe --events checkout.session.completed
 
 booking-migrate: ## Apply booking migrations (Alembic)
 	cd services/booking && uv run --env-file ../../.env alembic upgrade head

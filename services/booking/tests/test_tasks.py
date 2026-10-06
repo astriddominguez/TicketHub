@@ -105,7 +105,9 @@ async def test_no_email_once_the_reservation_is_no_longer_pending(
 
 
 async def test_reserving_enqueues_the_email_without_waiting_for_it(
-    client: AsyncClient, create_inventory: CreateInventory, enqueued_emails: list[str]
+    client: AsyncClient,
+    create_inventory: CreateInventory,
+    enqueued_tasks: list[tuple[str, str]],
 ) -> None:
     inventory = await create_inventory()
     response = await client.post(
@@ -113,11 +115,15 @@ async def test_reserving_enqueues_the_email_without_waiting_for_it(
         json={"inventory_id": inventory.id, "quantity": 1},
         headers=auth(1, email="ana@example.com"),
     )
-    assert enqueued_emails == [response.json()["id"]]
+    assert enqueued_tasks == [
+        ("booking.send_reservation_pending_email", response.json()["id"])
+    ]
 
 
 async def test_no_email_enqueued_without_an_address(
-    client: AsyncClient, create_inventory: CreateInventory, enqueued_emails: list[str]
+    client: AsyncClient,
+    create_inventory: CreateInventory,
+    enqueued_tasks: list[tuple[str, str]],
 ) -> None:
     inventory = await create_inventory()
     await client.post(
@@ -125,7 +131,7 @@ async def test_no_email_enqueued_without_an_address(
         json={"inventory_id": inventory.id, "quantity": 1},
         headers=auth(1),
     )
-    assert enqueued_emails == []
+    assert enqueued_tasks == []
 
 
 async def test_broker_down_does_not_fail_the_reservation(

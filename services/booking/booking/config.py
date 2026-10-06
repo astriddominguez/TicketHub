@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -32,6 +32,18 @@ class Settings(BaseSettings):
         default="booking.catalog-events", alias="BOOKING_CATALOG_EVENTS_QUEUE"
     )
 
+    # Stripe (test mode). Optional: without keys the service runs, and the payment
+    # endpoints answer 503 "not configured" instead of failing at startup.
+    stripe_secret_key: SecretStr | None = Field(default=None, alias="STRIPE_SECRET_KEY")
+    stripe_webhook_secret: SecretStr | None = Field(
+        default=None, alias="STRIPE_WEBHOOK_SECRET"
+    )
+    currency: str = "eur"
+    # Where buyers land after paying (the success/cancel pages of this service).
+    public_url: str = Field(default="http://localhost:8001", alias="BOOKING_PUBLIC_URL")
+    # Signs the codes inside the QR tickets, so fakes can be told apart.
+    ticket_signing_key: SecretStr = Field(alias="TICKET_SIGNING_KEY")
+
     # Email: Mailpit in development (captures everything, delivers nothing).
     smtp_host: str = Field(default="localhost", alias="SMTP_HOST")
     smtp_port: int = Field(default=1025, alias="SMTP_PORT")
@@ -45,6 +57,13 @@ class Settings(BaseSettings):
     reservation_rate_window_seconds: int = 60
     # Short on purpose: a few seconds of staleness only affects what we *show*.
     availability_cache_seconds: int = 5
+
+    @field_validator("stripe_secret_key", "stripe_webhook_secret", mode="before")
+    @classmethod
+    def empty_means_not_configured(cls, value: object) -> object:
+        # "STRIPE_SECRET_KEY=" in .env is an empty string, not "no key": treat it
+        # as missing so the payment endpoints say "not configured" (503).
+        return None if value == "" else value
 
     @property
     def database_url(self) -> str:

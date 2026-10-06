@@ -9,6 +9,9 @@ os.environ["BOOKING_REDIS_URL"] = os.environ.get(
 # ...and at test-only RabbitMQ exchange/queues, so dev messages are never touched.
 os.environ["CATALOG_EVENTS_EXCHANGE"] = "catalog.events.test"
 os.environ["BOOKING_CATALOG_EVENTS_QUEUE"] = "booking.catalog-events.test"
+# Stripe is faked in tests; only the webhook secret is needed, to sign payloads.
+os.environ["STRIPE_SECRET_KEY"] = ""
+os.environ["STRIPE_WEBHOOK_SECRET"] = "whsec_test_secret"
 
 import asyncio
 import uuid
@@ -24,12 +27,12 @@ from alembic.config import Config
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
+from booking import tasks
 from booking.cache import redis_client
 from booking.config import get_settings
 from booking.db import SessionFactory, engine
 from booking.main import app
 from booking.models import Inventory
-from booking.tasks import send_reservation_pending_email
 
 ALEMBIC_INI = os.path.join(os.path.dirname(__file__), "..", "alembic.ini")
 
@@ -69,7 +72,8 @@ async def clean_tables() -> AsyncIterator[None]:
     async with engine.begin() as conn:
         await conn.execute(
             text(
-                "TRUNCATE reservation, inventory, catalog_event RESTART IDENTITY CASCADE"
+                "TRUNCATE reservation, inventory, catalog_event, processed_stripe_event "
+                "RESTART IDENTITY CASCADE"
             )
         )
     await redis_client.flushdb()  # rate-limit counters and cached availability
@@ -112,14 +116,19 @@ def auth(user_id: int, email: str | None = None) -> dict[str, str]:
 
 
 @pytest.fixture(autouse=True)
-def enqueued_emails(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Never send real Celery messages from tests: record them instead."""
-    calls: list[str] = []
-    monkeypatch.setattr(
-        send_reservation_pending_email,
-        "delay",
-        lambda reservation_id: calls.append(reservation_id),
-    )
+def enqueued_tasks(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
+    """Never send real Celery messages from tests: record (task, argument) instead."""
+    calls: list[tuple[str, str]] = []
+    for task in (
+        tasks.send_reservation_pending_email,
+        tasks.send_tickets_email,
+        tasks.refund_late_payment,
+    ):
+
+        def record(reservation_id: str, name: str = task.name) -> None:
+            calls.append((name, reservation_id))
+
+        monkeypatch.setattr(task, "delay", record)
     return calls
 
 

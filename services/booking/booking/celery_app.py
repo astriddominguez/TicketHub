@@ -38,5 +38,9 @@ celery_app.conf.update(
             "task": "booking.expire_reservations",
             "schedule": 60.0,
         },
+        "sweep-payments-every-minute": {
+            "task": "booking.sweep_payments",
+            "schedule": 60.0,
+        },
     },
 )
