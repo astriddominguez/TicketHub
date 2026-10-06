@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch cancels the run that's still going.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint and type check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true  # reuse downloaded packages between runs
+
+      - name: Install dependencies (exactly as locked)
+        run: uv sync --all-packages --locked
+
+      - name: Create CI environment file
+        run: ./.github/ci.env.sh
+
+      - name: Ruff, formatting and mypy
+        run: make lint
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The same infrastructure as docker-compose.yml, as service containers.
+    services:
+      catalog-db:
+        image: postgres:18
+        env:
+          POSTGRES_DB: catalog
+          POSTGRES_USER: catalog
+          POSTGRES_PASSWORD: ci-password
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U catalog"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      booking-db:
+        image: postgres:18
+        env:
+          POSTGRES_DB: booking
+          POSTGRES_USER: booking
+          POSTGRES_PASSWORD: ci-password
+        ports: ["5434:5432"]
+        options: >-
+          --health-cmd "pg_isready -U booking"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:8-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      rabbitmq:
+        image: rabbitmq:4-management-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: tickethub
+          RABBITMQ_DEFAULT_PASS: ci-password
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies (exactly as locked)
+        run: uv sync --all-packages --locked
+
+      - name: Create CI environment file
+        run: ./.github/ci.env.sh
+
+      - name: Check for missing migrations
+        run: |
+          make manage CMD="makemigrations --check --dry-run"
+          make booking-migrate
+          cd services/booking && uv run --env-file ../../.env alembic check
+
+      - name: Tests with coverage (fails under 80%)
+        run: make test-cov
