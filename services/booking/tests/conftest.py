@@ -29,6 +29,7 @@ from booking.config import get_settings
 from booking.db import SessionFactory, engine
 from booking.main import app
 from booking.models import Inventory
+from booking.tasks import send_reservation_pending_email
 
 ALEMBIC_INI = os.path.join(os.path.dirname(__file__), "..", "alembic.ini")
 
@@ -85,6 +86,7 @@ async def client() -> AsyncIterator[AsyncClient]:
 def make_token(
     user_id: int,
     *,
+    email: str | None = None,
     roles: tuple[str, ...] = ("buyer",),
     token_type: str = "access",
     expires_in: timedelta = timedelta(minutes=15),
@@ -99,13 +101,26 @@ def make_token(
         "jti": uuid.uuid4().hex,
         "user_id": str(user_id),
         "roles": list(roles),
+        "email": email or "",
     }
     signing_key = key or get_settings().jwt_signing_key.get_secret_value()
     return jwt.encode(claims, signing_key, algorithm="HS256")
 
 
-def auth(user_id: int) -> dict[str, str]:
-    return {"Authorization": f"Bearer {make_token(user_id)}"}
+def auth(user_id: int, email: str | None = None) -> dict[str, str]:
+    return {"Authorization": f"Bearer {make_token(user_id, email=email)}"}
+
+
+@pytest.fixture(autouse=True)
+def enqueued_emails(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Never send real Celery messages from tests: record them instead."""
+    calls: list[str] = []
+    monkeypatch.setattr(
+        send_reservation_pending_email,
+        "delay",
+        lambda reservation_id: calls.append(reservation_id),
+    )
+    return calls
 
 
 CreateInventory = Callable[..., Awaitable[Inventory]]

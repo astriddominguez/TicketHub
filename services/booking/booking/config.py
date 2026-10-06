@@ -32,6 +32,13 @@ class Settings(BaseSettings):
         default="booking.catalog-events", alias="BOOKING_CATALOG_EVENTS_QUEUE"
     )
 
+    # Email: Mailpit in development (captures everything, delivers nothing).
+    smtp_host: str = Field(default="localhost", alias="SMTP_HOST")
+    smtp_port: int = Field(default=1025, alias="SMTP_PORT")
+    email_from: str = Field(
+        default="TicketHub <tickets@tickethub.local>", alias="EMAIL_FROM"
+    )
+
     redis_url: str = Field(alias="BOOKING_REDIS_URL")
     # Per buyer: enough for a real person, too few for a bot hoarding tickets.
     reservation_rate_limit: int = 10

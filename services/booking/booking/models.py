@@ -91,6 +91,9 @@ class Reservation(Base):
     # UUID instead of 1, 2, 3...: ids can't be guessed or used to count our sales.
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[int] = mapped_column(index=True)
+    # Copied from the token at booking time: later tasks (the payment webhook, the
+    # ticket email) run without anyone's token.
+    buyer_email: Mapped[str | None] = mapped_column(String(254))
     inventory_id: Mapped[int] = mapped_column(
         ForeignKey("inventory.id", ondelete="RESTRICT"), index=True
     )

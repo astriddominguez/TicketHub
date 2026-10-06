@@ -8,6 +8,7 @@ dependencies = [
     "aio-pika>=10.1.0",
     "alembic>=1.20.0",
     "asyncpg>=0.31.0",
+    "celery>=5.5",
     "fastapi>=0.142.2",
     "pydantic-settings>=2.15.0",
     "pyjwt>=2.15.0",

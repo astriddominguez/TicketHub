@@ -1,8 +1,10 @@
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from sqlalchemy import MetaData
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 
 from booking.config import get_settings
 
@@ -30,3 +32,19 @@ async def get_session() -> AsyncIterator[AsyncSession]:
     """FastAPI dependency: one session per request, always closed afterwards."""
     async with SessionFactory() as session:
         yield session
+
+
+@asynccontextmanager
+async def standalone_session() -> AsyncIterator[AsyncSession]:
+    """A session with its own short-lived engine, for code outside the web app.
+
+    Celery tasks run each job in a fresh event loop (asyncio.run). Pooled asyncpg
+    connections belong to the loop that created them, so the shared `engine`
+    can't be reused there: open one connection, use it, close it.
+    """
+    task_engine = create_async_engine(get_settings().database_url, poolclass=NullPool)
+    try:
+        async with AsyncSession(task_engine, expire_on_commit=False) as session:
+            yield session
+    finally:
+        await task_engine.dispose()

@@ -40,6 +40,7 @@ class RoleTokenObtainPairSerializer(TokenObtainPairSerializer):
     @classmethod
     def get_token(cls, user):
         token = super().get_token(user)
-        # Other services (booking) read the roles from the token without calling us.
+        # Other services (booking) read these from the token without calling us.
         token["roles"] = get_roles(user)
+        token["email"] = user.email  # booking sends the tickets here
         return token

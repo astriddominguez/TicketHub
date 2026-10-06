@@ -14,6 +14,7 @@ bearer_scheme = HTTPBearer(auto_error=False)
 class CurrentUser:
     id: int
     roles: tuple[str, ...]
+    email: str | None = None
 
 
 def _unauthorized(detail: str) -> HTTPException:
@@ -50,7 +51,11 @@ def get_current_user(
     # A refresh token is also signed by the catalog, but it is not meant for API calls.
     if claims["token_type"] != "access":
         raise _unauthorized("An access token is required.")
-    return CurrentUser(id=int(claims["user_id"]), roles=tuple(claims.get("roles", ())))
+    return CurrentUser(
+        id=int(claims["user_id"]),
+        roles=tuple(claims.get("roles", ())),
+        email=claims.get("email") or None,  # older tokens or users without email
+    )
 
 
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]

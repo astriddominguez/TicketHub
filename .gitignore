@@ -23,3 +23,6 @@ htmlcov/
 
 # Ignore SQLite database files
 db.sqlite3
+
+# Celery Beat local state
+.celerybeat-schedule*

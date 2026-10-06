@@ -58,6 +58,13 @@ class TestToken:
         ).json()["access"]
         assert AccessToken(token)["roles"] == ["buyer", "organizer"]
 
+    def test_token_carries_email_for_other_services(self, api_client):
+        user = UserFactory(email="ana@example.com")
+        token = api_client.post(
+            "/api/auth/token/", {"username": user.username, "password": PASSWORD}
+        ).json()["access"]
+        assert AccessToken(token)["email"] == "ana@example.com"
+
     def test_refresh_returns_new_access_token(self, api_client):
         user = UserFactory()
         refresh = api_client.post(

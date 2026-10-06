@@ -43,6 +43,7 @@ async def reserve(
     quantity: int,
     now: datetime,
     ttl: timedelta,
+    buyer_email: str | None = None,
 ) -> Reservation:
     # Check, subtract and read the price in ONE statement.
     taken = await session.execute(
@@ -70,6 +71,7 @@ async def reserve(
 
     reservation = Reservation(
         user_id=user_id,
+        buyer_email=buyer_email,
         inventory_id=inventory_id,
         quantity=quantity,
         unit_price=price,  # snapshot: later price changes don't affect this booking

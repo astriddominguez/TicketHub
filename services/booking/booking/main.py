@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
@@ -6,7 +8,7 @@ from fastapi import Depends, FastAPI, HTTPException, status
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from booking import cache, service
+from booking import cache, service, tasks
 from booking.auth import CurrentUserDep
 from booking.config import get_settings
 from booking.db import get_session
@@ -20,6 +22,8 @@ app = FastAPI(
     version="0.1.0",
 )
 
+logger = logging.getLogger(__name__)
+
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
 settings = get_settings()
@@ -28,6 +32,20 @@ reserve_rate_limit = RateLimit(
     limit=settings.reservation_rate_limit,
     window_seconds=settings.reservation_rate_window_seconds,
 )
+
+
+async def _enqueue_pending_email(reservation_id: uuid.UUID) -> None:
+    """Best effort: the reservation is already saved; an email must not undo it.
+
+    .delay() talks to RabbitMQ with blocking I/O, so it runs in a thread instead
+    of freezing the event loop (and every other request) while it waits.
+    """
+    try:
+        await asyncio.to_thread(
+            tasks.send_reservation_pending_email.delay, str(reservation_id)
+        )
+    except Exception:
+        logger.warning("Could not enqueue email for %s", reservation_id, exc_info=True)
 
 
 async def _invalidate_availability(session: AsyncSession, inventory_id: int) -> None:
@@ -97,6 +115,7 @@ async def create_reservation(
             quantity=payload.quantity,
             now=datetime.now(UTC),
             ttl=timedelta(minutes=settings.reservation_ttl_minutes),
+            buyer_email=user.email,
         )
     except service.InventoryNotFoundError:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Inventory not found.") from None
@@ -109,6 +128,8 @@ async def create_reservation(
             status.HTTP_409_CONFLICT, "These tickets are not on sale."
         ) from None
     await _invalidate_availability(session, reservation.inventory_id)
+    if user.email:
+        await _enqueue_pending_email(reservation.id)
     return reservation
 
 

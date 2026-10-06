@@ -1,13 +1,13 @@
 CATALOG := uv run --env-file .env python services/catalog/manage.py
 
-.PHONY: help up down ps manage makemigrations migrate run shell relay run-booking consumer booking-migrate booking-migration test test-catalog test-booking test-cov lint typecheck format
+.PHONY: help up down ps manage makemigrations migrate run shell relay run-booking consumer worker beat booking-migrate booking-migration test test-catalog test-booking test-cov lint typecheck format
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
 
 # --- Infrastructure ---
 
-up: ## Start infrastructure (Postgres x2, Redis, RabbitMQ)
+up: ## Start infrastructure (Postgres x2, Redis, RabbitMQ, Mailpit)
 	docker compose up -d
 
 down: ## Stop infrastructure containers (data is kept)
@@ -43,6 +43,12 @@ run-booking: ## Start the booking dev server on http://localhost:8001
 
 consumer: ## Consume catalog events from RabbitMQ into booking (Ctrl+C to stop)
 	cd services/booking && uv run --env-file ../../.env python -m booking.consumer
+
+worker: ## Run the booking Celery worker (background tasks)
+	cd services/booking && uv run --env-file ../../.env celery -A booking.celery_app worker --loglevel=info --without-mingle --without-gossip
+
+beat: ## Run the booking Celery Beat scheduler (only ONE at a time)
+	cd services/booking && uv run --env-file ../../.env celery -A booking.celery_app beat --loglevel=info --schedule ../../.celerybeat-schedule
 
 booking-migrate: ## Apply booking migrations (Alembic)
 	cd services/booking && uv run --env-file ../../.env alembic upgrade head
