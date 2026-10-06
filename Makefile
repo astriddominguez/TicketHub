@@ -10,7 +10,7 @@ install: ## Install every dependency of the whole workspace (run after uv add/re
 
 # --- Infrastructure ---
 
-up: ## Start infrastructure (Postgres x2, Redis, RabbitMQ, Mailpit, Jaeger)
+up: ## Start infrastructure (Postgres x2, Redis, RabbitMQ, Mailpit, Jaeger, Prometheus, Grafana)
 	docker compose up -d
 
 down: ## Stop infrastructure containers (data is kept)

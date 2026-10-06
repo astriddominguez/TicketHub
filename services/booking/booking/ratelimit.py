@@ -17,6 +17,7 @@ from redis.exceptions import RedisError
 
 from booking.auth import CurrentUserDep
 from booking.cache import redis_client
+from booking.metrics import RESERVATIONS
 
 log = structlog.get_logger(__name__)
 
@@ -45,6 +46,7 @@ class RateLimit:
             return
 
         if count > self.limit:
+            RESERVATIONS.labels(outcome="rate_limited").inc()
             retry_after = int((window + 1) * self.window_seconds - now) + 1
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,

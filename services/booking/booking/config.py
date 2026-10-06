@@ -52,6 +52,8 @@ class Settings(BaseSettings):
         default="TicketHub <tickets@tickethub.local>", alias="EMAIL_FROM"
     )
 
+    consumer_metrics_port: int = Field(default=9101, alias="CONSUMER_METRICS_PORT")
+
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     log_format: Literal["console", "json"] = Field(
         default="console", alias="LOG_FORMAT"

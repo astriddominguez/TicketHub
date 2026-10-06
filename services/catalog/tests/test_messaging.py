@@ -176,3 +176,30 @@ class TestTracing:
         event = EventFactory()
         message = OutboxMessage.objects.filter(payload__event_id=event.pk).last()
         assert message.trace_context == {}
+
+
+class TestOutboxMetrics:
+    def test_pending_count_and_age_are_exposed(self, api_client):
+        old = OutboxMessage.objects.create(routing_key="x", payload={})
+        OutboxMessage.objects.filter(pk=old.pk).update(
+            created_at=timezone.now() - timedelta(minutes=5)
+        )
+        OutboxMessage.objects.create(routing_key="x", payload={})
+
+        body = api_client.get("/metrics").content.decode()
+
+        lines = dict(
+            line.split(" ", 1)
+            for line in body.splitlines()
+            if line.startswith("catalog_outbox_")
+        )
+        assert float(lines["catalog_outbox_pending_messages"]) == 2
+        assert float(lines["catalog_outbox_oldest_pending_age_seconds"]) >= 300
+
+    def test_http_requests_are_counted_by_url_pattern(self, api_client):
+        event = EventFactory()
+        api_client.get(f"/api/events/{event.pk}/")
+        body = api_client.get("/metrics").content.decode()
+        # The pattern, not "/api/events/123/": one series for every event.
+        assert 'route="api/events/(?P<pk>[^/.]+)/$"' in body
+        assert f"/api/events/{event.pk}/" not in body

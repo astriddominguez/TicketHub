@@ -1,0 +1,9 @@
+# Load every dashboard JSON in /var/lib/grafana/dashboards on startup.
+apiVersion: 1
+providers:
+  - name: TicketHub
+    folder: TicketHub
+    type: file
+    disableDeletion: true
+    options:
+      path: /var/lib/grafana/dashboards

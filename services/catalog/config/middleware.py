@@ -8,6 +8,8 @@ from collections.abc import Callable
 import structlog
 from django.http import HttpRequest, HttpResponse
 
+from config.metrics import HTTP_LATENCY, HTTP_REQUESTS, route_template
+
 log = structlog.get_logger("catalog.http")
 
 REQUEST_ID_HEADER = "X-Request-ID"
@@ -30,6 +32,11 @@ class RequestContextMiddleware:
         response = self.get_response(request)
 
         response[REQUEST_ID_HEADER] = request_id
+        elapsed = time.perf_counter() - started
+        if request.path != "/metrics":  # Prometheus scraping itself isn't traffic
+            route = route_template(request)
+            HTTP_REQUESTS.labels(request.method, route, str(response.status_code)).inc()
+            HTTP_LATENCY.labels(request.method, route).observe(elapsed)
         # DRF authenticates (JWT) inside the view and stores the user back on
         # the request, so by now we know who it was.
         user = getattr(request, "user", None)
@@ -38,7 +45,7 @@ class RequestContextMiddleware:
             method=request.method,
             path=request.path,
             status_code=response.status_code,
-            duration_ms=round((time.perf_counter() - started) * 1000, 1),
+            duration_ms=round(elapsed * 1000, 1),
             user_id=user.pk if user is not None and user.is_authenticated else None,
         )
         return response

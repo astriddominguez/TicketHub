@@ -7,7 +7,8 @@ from typing import Annotated, Any
 import stripe
 import structlog
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +17,7 @@ from booking.auth import CurrentUserDep
 from booking.config import get_settings
 from booking.db import get_session
 from booking.logging_config import configure_logging
+from booking.metrics import PAYMENTS, REFUNDS_REQUESTED, RESERVATIONS
 from booking.models import Inventory, Reservation
 from booking.ratelimit import RateLimit
 from booking.request_context import request_context_middleware
@@ -146,15 +148,19 @@ async def create_reservation(
             buyer_email=user.email,
         )
     except service.InventoryNotFoundError:
+        RESERVATIONS.labels(outcome="not_found").inc()
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Inventory not found.") from None
     except service.NotEnoughTicketsError:
+        RESERVATIONS.labels(outcome="sold_out").inc()
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Not enough tickets left."
         ) from None
     except service.NotOnSaleError:
+        RESERVATIONS.labels(outcome="not_on_sale").inc()
         raise HTTPException(
             status.HTTP_409_CONFLICT, "These tickets are not on sale."
         ) from None
+    RESERVATIONS.labels(outcome="created").inc()
     await _invalidate_availability(session, reservation.inventory_id)
     if user.email:
         await _enqueue(tasks.send_reservation_pending_email.delay, reservation.id)
@@ -295,15 +301,23 @@ async def stripe_webhook(
         payment_intent_id=str(checkout.payment_intent),
         now=datetime.now(UTC),
     )
+    PAYMENTS.labels(outcome=outcome.value).inc()
     if outcome is payments.PaymentOutcome.CONFIRMED:
         await _enqueue(tasks.send_tickets_email.delay, reservation_id)
     elif outcome is payments.PaymentOutcome.LATE:
+        REFUNDS_REQUESTED.labels(reason="late_payment").inc()
         log.warning("late_payment_refunding", reservation_id=str(reservation_id))
         await _enqueue(tasks.refund_payment.delay, reservation_id)
     elif outcome is payments.PaymentOutcome.UNKNOWN_RESERVATION:
         log.error("payment_for_unknown_reservation", reservation_id=str(reservation_id))
     # Always 200 once verified: an error would make Stripe retry for days.
     return {"status": outcome.value}
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics() -> Response:
+    """Scraped by Prometheus. Internal only: the gateway won't expose it publicly."""
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/payment/success", response_class=HTMLResponse, include_in_schema=False)

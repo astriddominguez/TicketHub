@@ -25,6 +25,7 @@ from aio_pika.abc import (
 from opentelemetry import trace
 from opentelemetry.propagate import extract
 from opentelemetry.trace import SpanKind
+from prometheus_client import start_http_server
 from pydantic import ValidationError
 
 from booking import cache, tasks
@@ -32,6 +33,7 @@ from booking.catalog_sync import EventSnapshot, apply_event_snapshot
 from booking.config import Settings, get_settings
 from booking.db import SessionFactory
 from booking.logging_config import configure_logging
+from booking.metrics import REFUNDS_REQUESTED, SNAPSHOTS
 from booking.telemetry import configure_telemetry
 
 log = structlog.get_logger("booking.consumer")
@@ -100,6 +102,7 @@ async def _handle_message(message: AbstractIncomingMessage) -> None:
             body=message.body.decode(errors="replace")[:500],
             errors=exc.errors(include_url=False),
         )
+        SNAPSHOTS.labels(result="invalid").inc()
         await message.reject(requeue=False)
         return
 
@@ -107,11 +110,14 @@ async def _handle_message(message: AbstractIncomingMessage) -> None:
         async with SessionFactory() as session:
             result = await apply_event_snapshot(session, snapshot)
     except Exception:
+        SNAPSHOTS.labels(result="failed").inc()
         log.exception("snapshot_apply_failed", event_id=snapshot.event_id)
         await asyncio.sleep(1)  # don't spin if the database is down
         await message.nack(requeue=True)
         return
 
+    SNAPSHOTS.labels(result="applied" if result.applied else "stale").inc()
+    REFUNDS_REQUESTED.labels(reason="event_cancelled").inc(len(result.to_refund))
     if result.applied:
         await cache.invalidate(cache.availability_key(snapshot.event_id))
         for reservation_id in result.to_refund:
@@ -146,6 +152,8 @@ async def main() -> None:
     settings = get_settings()
     configure_logging(level=settings.log_level, fmt=settings.log_format)
     configure_telemetry("booking-consumer")
+    # No web server here: a small HTTP server just for Prometheus to scrape.
+    start_http_server(settings.consumer_metrics_port, addr="127.0.0.1")
     connection = await connect(settings)
     async with connection:
         channel = await connection.channel()

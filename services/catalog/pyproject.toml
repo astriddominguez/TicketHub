@@ -19,6 +19,7 @@ dependencies = [
     "opentelemetry-instrumentation-redis>=0.66b0",
     "opentelemetry-sdk>=1.45.0",
     "pika>=1.4.4",
+    "prometheus-client>=0.26.0",
     "psycopg[binary]>=3.3.6",
     "redis>=8.1.0",
     "structlog>=26.1.0",
