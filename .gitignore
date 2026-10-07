@@ -32,3 +32,10 @@ loadtests/results/
 
 # Django collectstatic output
 staticfiles/
+
+# Terraform: providers cache and STATE (the state contains secrets read from .env)
+infra/terraform/.terraform/
+*.tfstate
+*.tfstate.*
+# kubeconfig written by the kind provider: cluster admin credentials
+infra/terraform/*-config

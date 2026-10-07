@@ -24,7 +24,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ---------- Stage 2: the image that runs ----------
 FROM python:3.12-slim AS runtime
 
-RUN groupadd --system app && useradd --system --gid app --home-dir /app app
+# A fixed numeric UID: Kubernetes' runAsNonRoot can only verify a number, not a
+# user name ("app" could be root for all it knows).
+RUN groupadd --system --gid 10001 app \
+    && useradd --system --uid 10001 --gid 10001 --home-dir /app app
 
 ENV PATH=/app/.venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
@@ -34,7 +37,7 @@ WORKDIR /app/services/booking
 COPY --from=builder /app/.venv /app/.venv
 COPY services/booking/ ./
 
-USER app
+USER 10001:10001
 EXPOSE 8001
 
 # One worker process (Prometheus counters live in the process); more traffic =

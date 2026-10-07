@@ -1,0 +1,199 @@
+{{- if .Values.infra.enabled }}
+# In-cluster infrastructure for a local cluster. In production these would be
+# managed services (Cloud SQL, Memorystore...): set infra.enabled=false.
+
+# ---------------------------------------------------------------- Postgres x2
+# StatefulSet: a stable identity and its own disk (PersistentVolumeClaim) that
+# survives pod restarts. Credentials come from the secret built from .env.
+{{- range $db := list "catalog" "booking" }}
+{{- $prefix := upper $db }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $db }}-db
+  labels: {{- include "tickethub.labels" $ | nindent 4 }}
+spec:
+  serviceName: {{ $db }}-db
+  replicas: 1
+  selector:
+    matchLabels: {app: {{ $db }}-db}
+  template:
+    metadata:
+      labels: {app: {{ $db }}-db}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:18
+          ports:
+            - {name: postgres, containerPort: 5432}
+          env:
+            - name: POSTGRES_DB
+              valueFrom: {secretKeyRef: {name: {{ $.Values.secretName }}, key: {{ $prefix }}_DB_NAME}}
+            - name: POSTGRES_USER
+              valueFrom: {secretKeyRef: {name: {{ $.Values.secretName }}, key: {{ $prefix }}_DB_USER}}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ $.Values.secretName }}, key: {{ $prefix }}_DB_PASSWORD}}
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            periodSeconds: 5
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {memory: 512Mi}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ $.Values.infra.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $db }}-db
+  labels: {{- include "tickethub.labels" $ | nindent 4 }}
+spec:
+  selector: {app: {{ $db }}-db}
+  ports:
+    - {name: postgres, port: 5432, targetPort: postgres}
+{{- end }}
+---
+# ---------------------------------------------------------------- Redis
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  labels: {{- include "tickethub.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: redis}
+  template:
+    metadata:
+      labels: {app: redis}
+    spec:
+      containers:
+        - name: redis
+          image: redis:8-alpine
+          ports:
+            - {name: redis, containerPort: 6379}
+          readinessProbe:
+            exec: {command: ["redis-cli", "ping"]}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 50m, memory: 32Mi}
+            limits: {memory: 128Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  labels: {{- include "tickethub.labels" . | nindent 4 }}
+spec:
+  selector: {app: redis}
+  ports:
+    - {name: redis, port: 6379, targetPort: redis}
+---
+# ---------------------------------------------------------------- RabbitMQ
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rabbitmq
+  labels: {{- include "tickethub.labels" . | nindent 4 }}
+spec:
+  serviceName: rabbitmq
+  replicas: 1
+  selector:
+    matchLabels: {app: rabbitmq}
+  template:
+    metadata:
+      labels: {app: rabbitmq}
+    spec:
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:4-management-alpine
+          ports:
+            - {name: amqp, containerPort: 5672}
+            - {name: management, containerPort: 15672}
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              valueFrom: {secretKeyRef: {name: {{ .Values.secretName }}, key: RABBITMQ_USER}}
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom: {secretKeyRef: {name: {{ .Values.secretName }}, key: RABBITMQ_PASSWORD}}
+          readinessProbe:
+            exec: {command: ["rabbitmq-diagnostics", "-q", "ping"]}
+            periodSeconds: 10
+            timeoutSeconds: 8
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/rabbitmq}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 768Mi}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.infra.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  labels: {{- include "tickethub.labels" . | nindent 4 }}
+spec:
+  selector: {app: rabbitmq}
+  ports:
+    - {name: amqp, port: 5672, targetPort: amqp}
+    - {name: management, port: 15672, targetPort: management}
+---
+# ---------------------------------------------------------------- Mailpit + Jaeger
+{{- range $tool := list
+  (dict "name" "mailpit" "image" "axllent/mailpit:latest" "ports" (list (dict "name" "smtp" "port" 1025) (dict "name" "ui" "port" 8025)))
+  (dict "name" "jaeger" "image" "jaegertracing/jaeger:2.21.0" "ports" (list (dict "name" "otlp-http" "port" 4318) (dict "name" "ui" "port" 16686)))
+}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $tool.name }}
+  labels: {{- include "tickethub.labels" $ | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: {{ $tool.name }}}
+  template:
+    metadata:
+      labels: {app: {{ $tool.name }}}
+    spec:
+      containers:
+        - name: {{ $tool.name }}
+          image: {{ $tool.image }}
+          ports:
+            {{- range $tool.ports }}
+            - {name: {{ .name }}, containerPort: {{ .port }}}
+            {{- end }}
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {memory: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $tool.name }}
+  labels: {{- include "tickethub.labels" $ | nindent 4 }}
+spec:
+  selector: {app: {{ $tool.name }}}
+  ports:
+    {{- range $tool.ports }}
+    - {name: {{ .name }}, port: {{ .port }}, targetPort: {{ .name }}}
+    {{- end }}
+{{- end }}
+{{- end }}

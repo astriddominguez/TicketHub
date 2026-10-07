@@ -1,0 +1,54 @@
+# The same nginx.conf as docker compose (files/nginx.conf links to it): the
+# service names "catalog" and "booking" are identical in both environments.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-nginx
+  labels: {{- include "tickethub.labels" . | nindent 4 }}
+data:
+  default.conf: |
+{{ .Files.Get "files/nginx.conf" | indent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  labels: {{- include "tickethub.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.gateway.replicas }}
+  selector:
+    matchLabels: {app: gateway}
+  template:
+    metadata:
+      labels: {app: gateway}
+      annotations:
+        # Changing nginx.conf changes this hash, which rolls the pods to load it.
+        checksum/config: {{ .Files.Get "files/nginx.conf" | sha256sum }}
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.29-alpine
+          ports:
+            - {name: http, containerPort: 80}
+          volumeMounts:
+            - {name: config, mountPath: /etc/nginx/conf.d}
+          readinessProbe:
+            tcpSocket: {port: http}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {memory: 128Mi}
+      volumes:
+        - name: config
+          configMap: {name: gateway-nginx}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  labels: {{- include "tickethub.labels" . | nindent 4 }}
+spec:
+  type: NodePort  # kind maps it to http://localhost:8090 (infra/k8s/kind-config.yaml)
+  selector: {app: gateway}
+  ports:
+    - {name: http, port: 80, targetPort: http, nodePort: {{ .Values.gateway.nodePort }}}

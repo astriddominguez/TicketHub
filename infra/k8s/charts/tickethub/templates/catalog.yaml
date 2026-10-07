@@ -1,0 +1,105 @@
+# ---------------------------------------------------------------- migrations
+# A new Job per release revision: every `helm upgrade` migrates once.
+# It retries (backoffLimit) while the database is still starting.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: catalog-migrate-{{ .Release.Revision }}
+  labels: {{- include "tickethub.labels" . | nindent 4 }}
+spec:
+  backoffLimit: 10
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: {{ .Values.images.catalog }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          command: ["python", "manage.py", "migrate", "--noinput"]
+          {{- include "tickethub.appEnv" . | nindent 10 }}
+          {{- include "tickethub.securityContext" . | nindent 10 }}
+---
+# ---------------------------------------------------------------- API
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog
+  labels: {{- include "tickethub.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.catalog.replicas }}
+  selector:
+    matchLabels: {app: catalog}
+  strategy:
+    type: RollingUpdate
+    # Upgrades replace pods one at a time and never drop below the replica count.
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  template:
+    metadata:
+      labels: {app: catalog}
+    spec:
+      initContainers:
+        # Don't start until the migration Job has brought the schema up to date.
+        - name: wait-for-migrations
+          image: {{ .Values.images.catalog }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          command: ["sh", "-c", "until python manage.py migrate --check >/dev/null 2>&1; do echo 'waiting for migrations'; sleep 3; done"]
+          {{- include "tickethub.appEnv" . | nindent 10 }}
+          {{- include "tickethub.securityContext" . | nindent 10 }}
+      containers:
+        - name: catalog
+          image: {{ .Values.images.catalog }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports:
+            - {name: http, containerPort: 8000}
+          {{- include "tickethub.appEnv" . | nindent 10 }}
+          {{- include "tickethub.securityContext" . | nindent 10 }}
+          # Readiness: "can I take traffic?" (checks the database). Failing only
+          # takes the pod out of the Service, it doesn't restart it.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+              # Probes use the pod IP as Host, which Django's ALLOWED_HOSTS rejects.
+              httpHeaders: [{name: Host, value: localhost}]
+            periodSeconds: 10
+          # Liveness: "is the process alive?". Deliberately NOT the database: if
+          # Postgres went down, a DB check here would restart every pod in a loop.
+          livenessProbe:
+            tcpSocket: {port: http}
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources: {{- toYaml .Values.catalog.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalog
+  labels: {{- include "tickethub.labels" . | nindent 4 }}
+spec:
+  selector: {app: catalog}
+  ports:
+    - {name: http, port: 8000, targetPort: http}
+---
+# ---------------------------------------------------------------- outbox relay
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog-relay
+  labels: {{- include "tickethub.labels" . | nindent 4 }}
+spec:
+  replicas: 1  # safe to scale: SELECT ... FOR UPDATE SKIP LOCKED
+  selector:
+    matchLabels: {app: catalog-relay}
+  template:
+    metadata:
+      labels: {app: catalog-relay}
+    spec:
+      containers:
+        - name: relay
+          image: {{ .Values.images.catalog }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          command: ["python", "manage.py", "relay_outbox"]
+          {{- include "tickethub.appEnv" . | nindent 10 }}
+          {{- include "tickethub.securityContext" . | nindent 10 }}
+          resources: {{- toYaml .Values.background.resources | nindent 12 }}

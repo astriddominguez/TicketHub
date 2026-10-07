@@ -1,0 +1,13 @@
+TicketHub is deploying. Watch it come up:
+
+  kubectl get pods -w
+
+Then open the gateway:  {{ .Values.publicUrl }}
+  {{ .Values.publicUrl }}/api/docs/       catalog API docs
+  {{ .Values.publicUrl }}/booking/docs    booking API docs
+  {{ .Values.publicUrl }}/admin/          Django admin
+
+Internal tools (port-forward, then open localhost:<port>):
+  kubectl port-forward svc/jaeger 16686:16686     # traces
+  kubectl port-forward svc/mailpit 8025:8025      # captured emails
+  kubectl port-forward svc/rabbitmq 15672:15672   # RabbitMQ

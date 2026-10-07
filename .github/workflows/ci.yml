@@ -34,6 +34,21 @@ jobs:
       - name: Ruff, formatting and mypy
         run: make lint
 
+      - uses: azure/setup-helm@v5
+
+      - name: Helm chart renders and passes lint
+        run: |
+          helm lint --strict infra/k8s/charts/tickethub
+          helm template tickethub infra/k8s/charts/tickethub > /dev/null
+
+      - uses: hashicorp/setup-terraform@v4
+
+      - name: Terraform is formatted and valid
+        run: |
+          terraform -chdir=infra/terraform fmt -check -recursive
+          terraform -chdir=infra/terraform init -backend=false -input=false
+          terraform -chdir=infra/terraform validate
+
   test:
     name: Tests
     runs-on: ubuntu-latest

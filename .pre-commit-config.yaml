@@ -5,6 +5,9 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
+        # Helm templates are Go templates, not YAML until Helm renders them;
+        # `helm lint` (CI) validates those.
+        exclude: ^infra/k8s/charts/.*/templates/
       - id: check-toml
       - id: check-added-large-files
       - id: detect-private-key

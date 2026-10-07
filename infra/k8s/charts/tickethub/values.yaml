@@ -1,0 +1,39 @@
+# Images built by `docker compose build` and loaded into kind (`make k8s-images`).
+images:
+  catalog: tickethub-catalog:local
+  booking: tickethub-booking:local
+  pullPolicy: IfNotPresent  # never pull: they only exist locally
+
+# Created from your .env by `make k8s-secret`. Never stored in this chart.
+secretName: tickethub-env
+
+# Public URL of the gateway (kind maps NodePort 30080 to localhost:8090).
+publicUrl: http://localhost:8090
+
+catalog:
+  replicas: 2
+  resources:
+    requests: {cpu: 100m, memory: 192Mi}
+    limits: {memory: 512Mi}
+
+booking:
+  replicas: 2
+  resources:
+    requests: {cpu: 100m, memory: 192Mi}
+    limits: {memory: 512Mi}
+
+# Background processes (one replica each is plenty locally).
+background:
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 384Mi}
+
+gateway:
+  replicas: 2
+  nodePort: 30080
+
+# In-cluster Postgres x2, Redis, RabbitMQ, Mailpit and Jaeger. In production
+# you'd set enabled: false and point the services at managed equivalents.
+infra:
+  enabled: true
+  storage: 1Gi

@@ -204,7 +204,7 @@ services:
   booking-worker:
     <<: *booking
     command: ["celery", "-A", "booking.celery_app", "worker", "--loglevel=info",
-              "--without-mingle", "--without-gossip"]
+              "--without-mingle", "--without-gossip", "--concurrency=2"]
     depends_on:
       booking-migrate: {condition: service_completed_successfully}
       rabbitmq: {condition: service_healthy}

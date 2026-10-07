@@ -1,0 +1,110 @@
+# ---------------------------------------------------------------- migrations
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: booking-migrate-{{ .Release.Revision }}
+  labels: {{- include "tickethub.labels" . | nindent 4 }}
+spec:
+  backoffLimit: 10
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: {{ .Values.images.booking }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          command: ["alembic", "upgrade", "head"]
+          {{- include "tickethub.appEnv" . | nindent 10 }}
+          {{- include "tickethub.securityContext" . | nindent 10 }}
+---
+# ---------------------------------------------------------------- API
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: booking
+  labels: {{- include "tickethub.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.booking.replicas }}
+  selector:
+    matchLabels: {app: booking}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  template:
+    metadata:
+      labels: {app: booking}
+    spec:
+      initContainers:
+        # Wait until alembic reports the database at the latest revision.
+        - name: wait-for-migrations
+          image: {{ .Values.images.booking }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          command: ["sh", "-c", "until alembic current 2>/dev/null | grep -q '(head)'; do echo 'waiting for migrations'; sleep 3; done"]
+          {{- include "tickethub.appEnv" . | nindent 10 }}
+          {{- include "tickethub.securityContext" . | nindent 10 }}
+      containers:
+        - name: booking
+          image: {{ .Values.images.booking }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports:
+            - {name: http, containerPort: 8001}
+          {{- include "tickethub.appEnv" . | nindent 10 }}
+          {{- include "tickethub.securityContext" . | nindent 10 }}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 10
+          livenessProbe:  # process alive, not "database up" (see catalog.yaml)
+            tcpSocket: {port: http}
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources: {{- toYaml .Values.booking.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: booking
+  labels: {{- include "tickethub.labels" . | nindent 4 }}
+spec:
+  selector: {app: booking}
+  ports:
+    - {name: http, port: 8001, targetPort: http}
+---
+# ---------------------------------------------------------------- background
+# Celery's default concurrency is one child process per CPU it can see (8 on a
+# laptop, even inside a small container): that blew the memory limit (OOMKilled).
+# Fix it explicitly; add replicas for more throughput.
+{{- $processes := list
+  (dict "name" "booking-consumer" "command" (list "python" "-m" "booking.consumer") "strategy" "RollingUpdate")
+  (dict "name" "booking-worker" "command" (list "celery" "-A" "booking.celery_app" "worker" "--loglevel=info" "--without-mingle" "--without-gossip" "--concurrency=2") "strategy" "RollingUpdate")
+  (dict "name" "booking-beat" "command" (list "celery" "-A" "booking.celery_app" "beat" "--loglevel=info" "--schedule" "/tmp/celerybeat-schedule") "strategy" "Recreate")
+}}
+{{- range $processes }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .name }}
+  labels: {{- include "tickethub.labels" $ | nindent 4 }}
+spec:
+  replicas: 1
+  {{- if eq .strategy "Recreate" }}
+  # Beat is the scheduler: two at once would schedule every job twice. Recreate
+  # stops the old pod BEFORE starting the new one during an upgrade.
+  {{- end }}
+  strategy: {type: {{ .strategy }}}
+  selector:
+    matchLabels: {app: {{ .name }}}
+  template:
+    metadata:
+      labels: {app: {{ .name }}}
+    spec:
+      containers:
+        - name: {{ .name }}
+          image: {{ $.Values.images.booking }}
+          imagePullPolicy: {{ $.Values.images.pullPolicy }}
+          command: {{ toJson .command }}
+          {{- include "tickethub.appEnv" $ | nindent 10 }}
+          {{- include "tickethub.securityContext" $ | nindent 10 }}
+          resources: {{- toYaml $.Values.background.resources | nindent 12 }}
+{{- end }}

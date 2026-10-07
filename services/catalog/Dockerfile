@@ -23,7 +23,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ---------- Stage 2: the image that runs ----------
 FROM python:3.12-slim AS runtime
 
-RUN groupadd --system app && useradd --system --gid app --home-dir /app app
+# A fixed numeric UID: Kubernetes' runAsNonRoot can only verify a number, not a
+# user name ("app" could be root for all it knows).
+RUN groupadd --system --gid 10001 app \
+    && useradd --system --uid 10001 --gid 10001 --home-dir /app app
 
 ENV PATH=/app/.venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
@@ -40,7 +43,7 @@ RUN DJANGO_SECRET_KEY=build JWT_SIGNING_KEY=build \
     CATALOG_REDIS_URL=redis://x RABBITMQ_URL=amqp://x \
     python manage.py collectstatic --noinput --verbosity 0
 
-USER app
+USER 10001:10001
 EXPOSE 8000
 
 # One process with threads, not several worker processes: the Prometheus

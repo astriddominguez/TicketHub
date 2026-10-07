@@ -1,6 +1,6 @@
 CATALOG := uv run --env-file .env python services/catalog/manage.py
 
-.PHONY: help install up stack stack-logs down ps manage makemigrations migrate run shell relay run-booking consumer worker beat stripe-listen booking-migrate booking-migration loadtest-seed loadtest loadtest-ui loadtest-check loadtest-clean test test-catalog test-booking test-cov lint typecheck format
+.PHONY: help install up stack stack-logs down ps manage makemigrations migrate run shell relay run-booking consumer worker beat stripe-listen booking-migrate booking-migration k8s-up k8s-cluster k8s-images k8s-secret k8s-deploy k8s-status k8s-down tf-init tf-plan tf-apply tf-destroy loadtest-seed loadtest loadtest-ui loadtest-check loadtest-clean test test-catalog test-booking test-cov lint typecheck format
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -94,6 +94,48 @@ loadtest-check: ## Verify held + available == total for every load-test zone
 
 loadtest-clean: ## Delete the load-test event and its reservations
 	$(LOADTEST) python loadtests/seed.py --clean
+
+# --- Kubernetes (local cluster with kind + Helm) ---
+
+K8S_CLUSTER := tickethub
+CHART := infra/k8s/charts/tickethub
+
+k8s-up: k8s-cluster k8s-images k8s-secret k8s-deploy ## Create the cluster and deploy everything (http://localhost:8090)
+
+k8s-cluster: ## Create the local kind cluster (3 nodes)
+	kind get clusters | grep -qx $(K8S_CLUSTER) || kind create cluster --name $(K8S_CLUSTER) --config infra/k8s/kind-config.yaml
+
+k8s-images: ## Build the images and load them into the cluster's nodes
+	docker compose build catalog booking
+	kind load docker-image tickethub-catalog:local tickethub-booking:local --name $(K8S_CLUSTER)
+
+k8s-secret: ## Create/refresh the Kubernetes secret from your .env (never stored in git)
+	kubectl create secret generic tickethub-env --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f -
+
+k8s-deploy: ## Install or upgrade the Helm release and wait until it's ready
+	helm upgrade --install tickethub $(CHART) --wait --timeout 10m
+
+k8s-status: ## Show what's running in the cluster
+	kubectl get pods,svc,jobs -o wide
+
+k8s-down: ## Delete the whole local cluster
+	kind delete cluster --name $(K8S_CLUSTER)
+
+# --- Terraform (declares the same cluster + release as code) ---
+
+TF := terraform -chdir=infra/terraform
+
+tf-init: ## Download the Terraform providers (once)
+	$(TF) init
+
+tf-plan: ## Show what Terraform would change, without changing anything
+	$(TF) plan
+
+tf-apply: ## Create/update cluster, images, secret and release (http://localhost:8090)
+	$(TF) apply
+
+tf-destroy: ## Delete everything Terraform created
+	$(TF) destroy
 
 # --- Quality ---
 

@@ -1,0 +1,15 @@
+# Local Kubernetes cluster: three Docker containers acting as nodes.
+#   kind create cluster --name tickethub --config infra/k8s/kind-config.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    # The gateway's NodePort, reachable from your browser at http://localhost:8090
+    # (8090, not 8080: the docker compose gateway may be using 8080).
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 8090
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+  - role: worker
+  - role: worker

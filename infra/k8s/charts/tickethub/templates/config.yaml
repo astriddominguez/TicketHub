@@ -1,0 +1,24 @@
+# Non-secret settings: where things are inside the cluster.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tickethub-config
+  labels: {{- include "tickethub.labels" . | nindent 4 }}
+data:
+  CATALOG_DB_HOST: catalog-db
+  CATALOG_DB_PORT: "5432"
+  BOOKING_DB_HOST: booking-db
+  BOOKING_DB_PORT: "5432"
+  CATALOG_REDIS_URL: redis://redis:6379/1
+  BOOKING_REDIS_URL: redis://redis:6379/0
+  SMTP_HOST: mailpit
+  SMTP_PORT: "1025"
+  EMAIL_FROM: "TicketHub <tickets@tickethub.local>"
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+  LOG_FORMAT: json
+  DJANGO_DEBUG: "false"
+  DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
+  DJANGO_CSRF_TRUSTED_ORIGINS: {{ .Values.publicUrl | quote }}
+  NUM_PROXIES: "1"  # the gateway
+  BOOKING_PUBLIC_URL: {{ printf "%s/booking" .Values.publicUrl | quote }}
+  CONSUMER_METRICS_ADDR: 0.0.0.0
